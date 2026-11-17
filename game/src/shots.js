@@ -130,20 +130,29 @@ export function stageShot(name, game) {
     return { screen: game.player.dead ? SCREEN_OVER : SCREEN_PLAY };
   }
 
-  // mission: the warehouse shootout — mission 4, SMG out, Salt Kings closing in.
-  game.player.x = 2050;
-  game.player.y = 2600;
-  game.player.weapon = 'smg';
-  game.player.ammo.smg = 240;
-  game.clockMinutes = 17 * 60 + 40;
-  game.missions.index = 3;
+  // mission: the timed delivery — mission 6, Midnight Run. Lucia picked up
+  // the Docks package and is racing north to North Hills with the countdown
+  // bar on the HUD (58 s on the clock when the frame is taken).
+  game.player.x = 2500;
+  game.player.y = 3260;
+  const car = game.traffic[0];
+  car.x = 2500;
+  car.y = 3260;
+  car.angle = -Math.PI / 2;
+  car.speed = 280;
+  car.isPlayerCar = true;
+  game.player.inCar = car;
+  game.player.angle = -Math.PI / 2;
+  game.traffic.splice(game.traffic.indexOf(car), 1);
+  game.clockMinutes = 18 * 60 + 20;
+  game.missions.index = 5;
   startMission(game.missions, game.player);
   game.missions.step = 1;
-  game.missions.eliminateCount = 0;
-  stepGame(game, input, 1.5);
-  for (let i = 0; i < 60 * 12; i += 1) {
-    combatAutopilot(game, input);
-    game.step(STEP, input, game.aim || null);
+  game.missions.stepTimer = 58;
+  const route = { index: 0, points: [{ x: 2400, y: 3100 }, { x: 2400, y: 700 }, { x: 3600, y: 700 }] };
+  for (let i = 0; i < 60 * 8; i += 1) {
+    driveAutopilot(game, input, route);
+    game.step(STEP, input, null);
     if (game.player.dead) break;
   }
   return { screen: game.player.dead ? SCREEN_OVER : SCREEN_PLAY };

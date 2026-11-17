@@ -88,6 +88,9 @@ export function createGame(seed) {
     game.camera = { x: player.x - VIEW_W / 2, y: player.y - VIEW_H / 2 };
     game.shake = 0;
     game.stats = { shotsFired: 0, hits: 0 };
+    game.missionFlash = 0; // seconds left of the gold "mission complete" banner
+    game.wantedFlash = 0; // seconds left of the red "heat rising" border
+    game.lastReward = 0; // reward of the last completed mission, for the banner
     game.pickups = [
       { kind: 'health', x: 3650, y: 880, taken: false },
       { kind: 'health', x: 1250, y: 700, taken: false },
@@ -513,6 +516,8 @@ export function createGame(seed) {
       const reward = mission.reward;
       player.money += reward;
       player.respect += 10;
+      game.lastReward = reward;
+      game.missionFlash = 4;
       showMessage(missions, `${mission.title} complete! +$${reward}`, 5);
       events |= EVENT_MISSION;
       if (mission.id === 'm5') {
@@ -567,6 +572,12 @@ export function createGame(seed) {
     game.camera.y = Math.max(0, Math.min(WORLD_H - VIEW_H, game.camera.y));
     if (game.shake > 0) game.shake = Math.max(0, game.shake - dt * 30);
 
+    // Feedback flashes: a wanted-level rise flashes the screen edge red,
+    // a completed mission flashes the gold banner (see render.js).
+    if (events & EVENT_WANTED_UP) game.wantedFlash = 2;
+    if (game.missionFlash > 0) game.missionFlash -= dt;
+    if (game.wantedFlash > 0) game.wantedFlash -= dt;
+
     if (player.dead) {
       player.deathTimer += dt;
       events |= EVENT_DEATH;
@@ -584,6 +595,13 @@ export function createGame(seed) {
   game.score = score;
   game.objectiveText = () => objectiveText(missions);
   game.missionTarget = () => missionTarget(missions);
+  // The step the player is on right now (null when no mission is active),
+  // so the HUD can draw the delivery countdown and the stealth indicator.
+  game.activeStep = () => {
+    const m = currentMission(missions);
+    if (!m || !missions.active) return null;
+    return m.steps[missions.step] || null;
+  };
   return game;
 }
 

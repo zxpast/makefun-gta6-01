@@ -56,12 +56,33 @@ export const STORY = [
     ],
     reward: 5000,
   },
+  {
+    id: 'm6', chapter: 6, title: 'Midnight Run',
+    brief: 'A buyer in North Hills wants the Docks package in 75 seconds. Drive fast — the clock is the boss.',
+    intro: 'Midnight run. The package is hot, the buyer is impatient, and North Hills is a long way from the Docks.',
+    steps: [
+      { kind: 'goto', x: 2500, y: 3260, radius: 130, text: 'Pick up the package at the Docks' },
+      { kind: 'timedGoto', x: 3600, y: 700, radius: 130, seconds: 75, text: 'Deliver to North Hills before the clock runs out' },
+    ],
+    reward: 1200,
+  },
+  {
+    id: 'm7', chapter: 7, title: 'Silent Pickup',
+    brief: 'A contact waits at Sunset Pier. Get there clean — any wanted star and the deal is off.',
+    intro: 'The Pier at dawn. One quiet handoff, no sirens. The Salt Kings have eyes on the Boardwalk — stay invisible.',
+    steps: [
+      { kind: 'stealth', x: 300, y: 1500, radius: 140, text: 'Reach Sunset Pier with NO wanted stars' },
+      { kind: 'stealth', x: 1250, y: 750, radius: 130, text: 'Bring the handoff home clean — no wanted stars' },
+    ],
+    reward: 1800,
+  },
 ];
 
 export const SIDE_JOBS = [
   { id: 'taxi', title: 'Taxi Fare', text: 'Pick up the fare and drop them off', pay: 150 },
   { id: 'delivery', title: 'Courier Run', text: 'Deliver the parcel across town', pay: 200 },
   { id: 'vigilante', title: 'Vigilante', text: 'Stop the getaway car', pay: 350 },
+  { id: 'repo', title: 'Repo Run', text: 'Steal a car and deliver it to the Eastside garage', pay: 500 },
 ];
 
 export function makeMissionState() {
@@ -89,7 +110,11 @@ export function currentMission(state) {
 export function objectiveText(state) {
   if (state.sideJob) {
     const job = SIDE_JOBS.find((j) => j.id === state.sideJob);
-    if (job) return `${job.title}: ${job.text}`;
+    if (job) {
+      if (job.id === 'repo' && state.sideStep === 0) return 'Repo Run: steal any car first';
+      if (job.id === 'repo') return 'Repo Run: deliver the car to the Eastside garage';
+      return `${job.title}: ${job.text}`;
+    }
   }
   const m = currentMission(state);
   if (!m) return 'Story complete — free roam. Press M for a side job.';
@@ -151,6 +176,26 @@ export function updateMission(state, ctx, dt) {
     } else {
       state.stepTimer = 0;
     }
+  } else if (step.kind === 'timedGoto') {
+    // Countdown delivery: the clock starts on first entry into the step
+    // (advance() resets stepTimer to 0) and running out sends Lucia back
+    // to the pickup — a real fail-and-retry loop, not a free pass.
+    if (state.stepTimer <= 0) state.stepTimer = step.seconds;
+    state.stepTimer -= dt;
+    if (dist(step.x, step.y) < step.radius) return advance(state);
+    if (state.stepTimer <= 0) {
+      state.stepTimer = 0;
+      state.step = 0;
+      showMessage(state, 'Too slow — the buyer walked. Back to the Docks!', 4);
+      return 'step';
+    }
+  } else if (step.kind === 'stealth') {
+    // Only counts while clean: arriving with any wanted star does not
+    // complete the step — lose the heat and come back.
+    if (dist(step.x, step.y) < step.radius) {
+      if (ctx.player.wanted === 0) return advance(state);
+      if (state.messageTimer <= 0) showMessage(state, 'Spotted! Lose the heat, then come back clean.', 3);
+    }
   } else if (step.kind === 'escape') {
     if (ctx.player.wanted === 0 && dist(1250, 750) < 130) return advance(state);
   }
@@ -178,7 +223,7 @@ export function missionTarget(state) {
   if (!m || !state.active) return null;
   const step = m.steps[state.step];
   if (!step) return null;
-  if (step.kind === 'goto' || step.kind === 'wait') return { x: step.x || 2450, y: step.y || 1150, radius: step.radius || 130 };
+  if (step.kind === 'goto' || step.kind === 'wait' || step.kind === 'timedGoto' || step.kind === 'stealth') return { x: step.x || 2450, y: step.y || 1150, radius: step.radius || 130 };
   if (step.kind === 'escape') return { x: 1250, y: 750, radius: 130 };
   return null;
 }
@@ -186,13 +231,19 @@ export function missionTarget(state) {
 export function startSideJob(state, rng, player) {
   if (state.sideJob || (currentMission(state) && state.active)) return null;
   const job = SIDE_JOBS[Math.floor(rng() * SIDE_JOBS.length)];
+  state.sideJob = job.id;
+  state.sideStep = 0;
+  if (job.id === 'repo') {
+    // Phase 0: steal a car first — no destination marker until Lucia has one.
+    state.sideTarget = null;
+    showMessage(state, `Repo Run: steal any car, then deliver it — $${job.pay}`, 5);
+    return job;
+  }
   // Pick a destination far from the player, on a road.
   const dest = {
     x: 400 + Math.floor(rng() * 11) * 400,
     y: 300 + Math.floor(rng() * 8) * 400,
   };
-  state.sideJob = job.id;
-  state.sideStep = 0;
   state.sideTarget = dest;
   showMessage(state, `${job.title}: ${job.text} — $${job.pay}`, 5);
   return job;
@@ -200,6 +251,15 @@ export function startSideJob(state, rng, player) {
 
 export function updateSideJob(state, ctx, dt) {
   if (!state.sideJob) return null;
+  // Repo Run phase 0: wait until Lucia is in a car, then set the garage target.
+  if (state.sideJob === 'repo' && state.sideStep === 0) {
+    if (ctx.player.inCar) {
+      state.sideStep = 1;
+      state.sideTarget = { x: 3200, y: 3100 };
+      showMessage(state, 'Repo target secured — deliver it to the Eastside garage', 4);
+    }
+    return null;
+  }
   const target = state.sideTarget;
   if (!target) return null;
   const dist = Math.hypot(ctx.player.x - target.x, ctx.player.y - target.y);

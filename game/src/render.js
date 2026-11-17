@@ -428,7 +428,11 @@ export function createRenderer(canvas) {
     ctx.fillStyle = '#3498db';
     ctx.fillRect(26, 90, 180 * (player.armor / PLAYER.armor), 5);
     text('HP', 212, 86, 11, '#ffffff', 'left');
-    // Top-right: wanted stars + clock + district.
+    // Top-right: wanted stars + clock + district, on a dark panel so the
+    // stars stay readable against bright sky, sand or headlights.
+    ctx.fillStyle = 'rgba(10,14,24,0.72)';
+    roundRect(ctx, VIEW_W - 266, 12, 254, 92, 10);
+    ctx.fill();
     const stars = '★'.repeat(player.wanted) + '☆'.repeat(5 - player.wanted);
     text(stars, VIEW_W - 16, 46, 30, player.wanted > 0 ? '#ffd700' : '#888888', 'right', 'bold');
     const hh = Math.floor(game.clockMinutes / 60);
@@ -443,6 +447,32 @@ export function createRenderer(canvas) {
     roundRect(ctx, (VIEW_W - ow) / 2, VIEW_H - 52, ow, 34, 8);
     ctx.fill();
     text(objective, VIEW_W / 2, VIEW_H - 29, 15, '#ffffff', 'center');
+    // Delivery countdown bar (mission 6): the clock is the boss.
+    const step = game.activeStep ? game.activeStep() : null;
+    if (step && step.kind === 'timedGoto') {
+      const total = step.seconds || 1;
+      const left = Math.max(0, game.missions.stepTimer);
+      const frac = left / total;
+      const barW = 360;
+      const bx = (VIEW_W - barW) / 2;
+      const by = VIEW_H - 92;
+      ctx.fillStyle = 'rgba(10,14,24,0.72)';
+      roundRect(ctx, bx - 8, by - 8, barW + 16, 34, 8);
+      ctx.fill();
+      ctx.fillStyle = '#3a3f47';
+      ctx.fillRect(bx, by, barW, 12);
+      ctx.fillStyle = frac > 0.4 ? '#2ecc71' : frac > 0.2 ? '#f39c12' : '#e74c3c';
+      ctx.fillRect(bx, by, barW * frac, 12);
+      text(`DELIVERY — ${Math.ceil(left)}s left`, VIEW_W / 2, by + 30, 13, '#ffffff', 'center', 'bold');
+    }
+    // Stealth indicator (mission 7): green while clean, red once spotted.
+    if (step && step.kind === 'stealth') {
+      const clean = player.wanted === 0;
+      text(
+        clean ? 'STAY CLEAN — no wanted stars' : 'SPOTTED — lose the heat to stay clean!',
+        VIEW_W / 2, VIEW_H - 62, 14, clean ? '#2ecc71' : '#e74c3c', 'center', 'bold',
+      );
+    }
     // Bottom-right: weapon + ammo + speed.
     const weapon = WEAPONS[player.weapon];
     const ammo = player.ammo[player.weapon];
@@ -462,9 +492,33 @@ export function createRenderer(canvas) {
       ctx.fill();
       text(m.message, VIEW_W / 2, 142, 16, '#ffe14d', 'center', 'bold');
     }
-    // Controls hint, first minute only.
-    if (game.elapsed < 25) {
+    // Controls hint, first minute only — plus a one-line tutorial on the
+    // very first load, before Lucia has started her first job.
+    const firstRun = game.missions.index === 0 && !game.missions.active && game.missions.completed.length === 0;
+    if (firstRun && game.elapsed < 40) {
+      text('NEW HERE? Press M to start your first job — walk up to a car and press E to steal it.', VIEW_W / 2, 118, 14, '#ffe14d', 'center', 'bold');
+      text('WASD move/drive · E steal/exit car · Mouse aim, Click shoot · M mission · P pause', VIEW_W / 2, 142, 13, 'rgba(255,255,255,0.75)', 'center');
+    } else if (game.elapsed < 25) {
       text('WASD move/drive · E steal/exit car · Mouse aim, Click shoot · M mission · P pause', VIEW_W / 2, 118, 13, 'rgba(255,255,255,0.75)', 'center');
+    }
+    // Wanted-level flash: a red frame + warning while the heat is rising.
+    if (game.wantedFlash > 0) {
+      ctx.strokeStyle = `rgba(231,76,60,${Math.min(1, game.wantedFlash)})`;
+      ctx.lineWidth = 8;
+      ctx.strokeRect(4, 4, VIEW_W - 8, VIEW_H - 8);
+      text(`HEAT RISING — ${player.wanted} STAR${player.wanted === 1 ? '' : 'S'}`, VIEW_W / 2, 196, 22, '#e74c3c', 'center', 'bold');
+    }
+    // Mission-complete flash: a gold banner with the payout.
+    if (game.missionFlash > 0) {
+      const alpha = Math.min(1, game.missionFlash);
+      ctx.fillStyle = `rgba(10,14,24,${0.85 * alpha})`;
+      const bw = 560;
+      roundRect(ctx, (VIEW_W - bw) / 2, 250, bw, 64, 10);
+      ctx.fill();
+      ctx.strokeStyle = `rgba(241,196,15,${alpha})`;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      text(`MISSION COMPLETE  +$${game.lastReward}`, VIEW_W / 2, 292, 28, '#f1c40f', 'center', 'bold');
     }
     // Crosshair at the mouse (world aim).
     if (!player.inCar && !player.dead) {

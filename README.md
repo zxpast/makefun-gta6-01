@@ -44,12 +44,22 @@ files, and all sound is synthesized live with WebAudio.
   intersections; 42 pedestrians wander the sidewalks and flee gunfire.
 - **Wanted level and police** — 0–5 stars. Police cars chase and ram you, foot
   officers open fire at 3+ stars. Hide and the stars fade one by one.
-- **Missions and a story** — 5 story chapters (First Wheels, The Pickup,
-  Getaway, Payback, The Big Score) plus taxi, courier and vigilante side jobs.
+- **Missions and a story** — 7 story chapters (First Wheels, The Pickup,
+  Getaway, Payback, The Big Score, Midnight Run, Silent Pickup) plus taxi,
+  courier, vigilante and repo side jobs. Midnight Run is a timed delivery —
+  75 seconds from the Docks to North Hills, with a countdown bar on the HUD
+  and a retry if the clock beats you. Silent Pickup is stealth: reach Sunset
+  Pier and bring the handoff home with no wanted stars, or the deal is off.
+  Repo Run is a two-part side job: steal a car, then deliver it to the
+  Eastside garage.
 - **Combat** — 4 weapons, car explosions, rival gang shootouts.
 - **HUD with minimap** — cash, health/armour, wanted stars, clock, district,
   weapon/ammo, speed, objective tracker and a live minimap with police blips
-  and the mission marker.
+  and the mission marker. The wanted stars, clock and district sit on a dark
+  panel so they stay readable against bright sky or sand; a delivery countdown
+  bar appears on timed jobs, a green/red stealth line on quiet ones, a red
+  frame flashes when the heat rises, and a gold banner pays out when a mission
+  completes. A one-line tutorial greets first-time players on load.
 - **Start screen and save** — title screen over the living city, pause menu,
   and automatic saves to localStorage (money, missions, position, stats).
 - **Polish** — synthesized engine hum, sirens, gunshots and jingles; screen
@@ -62,7 +72,8 @@ files, and all sound is synthesized live with WebAudio.
 1. `1-start.jpg` — the title screen over the living city.
 2. `2-drive.jpg` — cruising Downtown at sunset with a wanted star.
 3. `3-chase.jpg` — a three-star police chase on the Boardwalk at night.
-4. `4-mission.jpg` — the warehouse shootout, mission 4: Payback.
+4. `4-mission.jpg` — the timed delivery, mission 6: Midnight Run, racing
+   north to North Hills with the countdown bar on the HUD.
 
 ## Structure
 
@@ -73,7 +84,8 @@ files, and all sound is synthesized live with WebAudio.
 - `game/src/city.js` — city generation and collision
 - `game/src/entities.js` — traffic, pedestrians, police AI
 - `game/src/player.js` — Lucia on foot, driving, weapons, wanted level
-- `game/src/missions.js` — the 5-chapter story and side jobs
+- `game/src/missions.js` — the 7-chapter story (timed-delivery and stealth
+  steps included) and side jobs, incl. the two-part Repo Run
 - `game/src/world.js` — the simulation: rules, bullets, pickups, police
 - `game/src/render.js` — drawing: city, cars, HUD, minimap, screens
 - `game/src/save.js` — localStorage save/load
