@@ -1,54 +1,39 @@
-// Solano Heat — saving. One job: persist the campaign (money, mission progress,
-// position, stats) to localStorage and read it back. Nothing here touches the
-// network; a save that cannot be written is simply forgotten, never fatal.
-export const SAVE_KEY = 'solano-heat.save.v1';
+// Solano Heat — saving between visits.
+//
+// One small JSON blob in localStorage: the cash, which chapters are done, which
+// chapter is current, and the best (most cash held at once). Loading is
+// forgiving — a missing, broken or private-mode store just starts a new game.
+// Nothing here knows about the world; the caller hands it plain numbers.
+import { SAVE_KEY } from './config.js';
 
-export function saveGame(game) {
-  try {
-    const data = {
-      version: 1,
-      savedAt: Date.now(),
-      player: {
-        x: game.player.x,
-        y: game.player.y,
-        money: game.player.money,
-        respect: game.player.respect,
-        health: game.player.health,
-        armor: game.player.armor,
-        weapon: game.player.weapon,
-        ammo: game.player.ammo,
-        kills: game.player.kills,
-        carsStolen: game.player.carsStolen,
-        distanceDriven: game.player.distanceDriven,
-      },
-      missionIndex: game.missions.index,
-      completed: game.missions.completed,
-      clockMinutes: game.clockMinutes,
-      best: game.best,
-    };
-    window.localStorage.setItem(SAVE_KEY, JSON.stringify(data));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export function loadGame() {
+export function readSave() {
   try {
     const raw = window.localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
     const data = JSON.parse(raw);
-    if (!data || data.version !== 1 || !data.player) return null;
-    return data;
+    if (typeof data !== 'object' || data === null) return null;
+    return {
+      cash: Number.isFinite(data.cash) ? data.cash : 0,
+      chapter: Number.isInteger(data.chapter) ? data.chapter : 0,
+      completed: Array.isArray(data.completed) ? data.completed : [],
+      bestCash: Number.isFinite(data.bestCash) ? data.bestCash : 0,
+    };
   } catch {
     return null;
   }
 }
 
-export function hasSave() {
+export function writeSave(save) {
   try {
-    return window.localStorage.getItem(SAVE_KEY) !== null;
+    window.localStorage.setItem(SAVE_KEY, JSON.stringify({
+      cash: save.cash,
+      chapter: save.chapter,
+      completed: save.completed,
+      bestCash: save.bestCash,
+    }));
+    return true;
   } catch {
+    // Private windows and full stores just mean the save lasts this visit.
     return false;
   }
 }
@@ -56,5 +41,7 @@ export function hasSave() {
 export function clearSave() {
   try {
     window.localStorage.removeItem(SAVE_KEY);
-  } catch { /* ignore */ }
+  } catch {
+    // Nothing to do: the store is already unreachable.
+  }
 }

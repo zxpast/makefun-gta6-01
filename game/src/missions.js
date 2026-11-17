@@ -1,273 +1,319 @@
-// Solano Heat — missions and the story. One job: the five-chapter story of Lucia
-// Vega, plus the side jobs that pay between chapters. Each mission is a small
-// state machine: an objective, a target point, and what happens when you arrive,
-// shoot, or escape. The world calls update() every step and reads `objective`.
-export const STORY = [
+// Solano Heat — the seven chapters and the four side jobs.
+//
+// Missions are plain data plus a small state machine. A mission is a list of
+// steps; a step is one kind of work (walk somewhere, steal a car, drive to a
+// marker before a clock runs out, arrive with no heat on you, stand in a zone,
+// lose the police). The engine watches the world each step and advances the
+// step when its condition is met, pays the reward at the end, and hands the
+// next chapter over. Side jobs are the same shape, repeatable, and pay cash.
+// Nothing here draws or touches the browser, so the whole of it runs in Node
+// for tests: give it a world snapshot and it tells you what happened.
+import { MARKERS } from './city.js';
+
+export const CHAPTERS = [
   {
-    id: 'm1', chapter: 1, title: 'First Wheels',
-    brief: 'Lucia needs wheels. Steal any car and bring it to the Marina.',
-    intro: 'Lucia Vega, ex-mechanic, back in Port Solano with $250 and a grudge. The Salt Kings took her garage. First: wheels.',
+    id: 'first-ride',
+    title: 'Chapter 1 — First Ride',
+    briefing: 'Lucia is back in Port Solano with nothing but a debt. Steal the parked car by the safehouse and bring it to the Eastside garage.',
+    reward: 300,
     steps: [
-      { kind: 'stealCar', text: 'Steal a car (walk up to one and press E)' },
-      { kind: 'goto', x: 900, y: 3260, radius: 130, text: 'Drive to the Marina' },
+      { kind: 'steal', text: 'Steal a car (walk up to one and press E)' },
+      { kind: 'driveTo', marker: 'eastsideGarage', text: 'Drive the car to the Eastside garage' },
     ],
-    reward: 400,
   },
   {
-    id: 'm2', chapter: 2, title: 'The Pickup',
-    brief: 'Pick up the package at the Docks and bring it home. Keep it quiet.',
-    intro: 'A friend of a friend needs a package moved. The Docks, midnight-ish, no questions.',
+    id: 'courier',
+    title: 'Chapter 2 — Courier',
+    briefing: 'The Docks crew needs a package moved, no questions. Pick it up downtown and run it to the Marina.',
+    reward: 450,
     steps: [
-      { kind: 'goto', x: 2500, y: 3260, radius: 130, text: 'Reach the Docks pickup' },
-      { kind: 'goto', x: 1250, y: 750, radius: 130, text: 'Bring the package to the Safehouse' },
+      { kind: 'goto', marker: 'downtownPickup', text: 'Pick up the package downtown' },
+      { kind: 'driveTo', marker: 'marinaDrop', text: 'Deliver the package to the Marina' },
     ],
-    reward: 700,
-    wantedOnPickup: 1,
   },
   {
-    id: 'm3', chapter: 3, title: 'Getaway',
-    brief: 'The cops made you at the Docks. Lose a 2-star wanted level, then reach the Safehouse.',
-    intro: 'A patrol car spotted the handoff. Now the whole city is looking for Lucia.',
+    id: 'gang-pickup',
+    title: 'Chapter 3 — Gang Pickup',
+    briefing: 'Marco is waiting on the Eastside and the Docks crew wants him home. Fetch him, then drive him to the Docks.',
+    reward: 600,
     steps: [
-      { kind: 'wanted', stars: 2, text: 'Lose the heat (stay out of sight)' },
-      { kind: 'goto', x: 1250, y: 750, radius: 130, text: 'Reach the Safehouse' },
+      { kind: 'goto', marker: 'eastsideGarage', text: 'Pick up Marco on the Eastside' },
+      { kind: 'driveTo', marker: 'docksPickup', text: 'Drive Marco to the Docks' },
     ],
-    reward: 900,
-    startWanted: 2,
   },
   {
-    id: 'm4', chapter: 4, title: 'Payback',
-    brief: 'The Salt Kings run the warehouse on Eastside. Take out 6 of their crew.',
-    intro: 'The warehouse is where they chopped her garage cars. Time to return the favour.',
+    id: 'getaway',
+    title: 'Chapter 4 — Getaway',
+    briefing: 'The job went loud. Three stars and every cop in the city is coming. Lose them, then get to the safehouse.',
+    reward: 800,
+    heatOnStart: 3,
     steps: [
-      { kind: 'goto', x: 2050, y: 2350, radius: 160, text: 'Reach the Salt Kings Warehouse' },
-      { kind: 'eliminate', count: 6, text: 'Take out 6 Salt Kings crew' },
+      { kind: 'loseHeat', text: 'Lose the police (get wanted down to zero stars)' },
+      { kind: 'goto', marker: 'safehouse', text: 'Reach the safehouse' },
     ],
-    reward: 1500,
   },
   {
-    id: 'm5', chapter: 5, title: 'The Big Score',
-    brief: 'Hit Solano Bank, grab the cash, and lose a 3-star wanted level at the Safehouse.',
-    intro: 'One job to buy the garage back. The bank, the vault, the whole city chasing you.',
+    id: 'turf',
+    title: 'Chapter 5 — Turf Takeover',
+    briefing: 'North Hills belongs to whoever stands on it. Hold all three turf spots, three seconds each, and the Hills are yours.',
+    reward: 1000,
     steps: [
-      { kind: 'goto', x: 2450, y: 1150, radius: 130, text: 'Reach Solano Bank' },
-      { kind: 'wait', seconds: 6, text: 'Crack the vault (stay in the circle)' },
-      { kind: 'escape', stars: 3, text: 'Escape the 3-star wanted level at the Safehouse' },
+      { kind: 'wait', marker: 'turfWest', seconds: 3, text: 'Hold the Overlook turf (3s)' },
+      { kind: 'wait', marker: 'turfNorth', seconds: 3, text: 'Hold the Hills turf (3s)' },
+      { kind: 'wait', marker: 'turfEast', seconds: 3, text: 'Hold the Ridge turf (3s)' },
     ],
-    reward: 5000,
   },
   {
-    id: 'm6', chapter: 6, title: 'Midnight Run',
-    brief: 'A buyer in North Hills wants the Docks package in 75 seconds. Drive fast — the clock is the boss.',
-    intro: 'Midnight run. The package is hot, the buyer is impatient, and North Hills is a long way from the Docks.',
-    steps: [
-      { kind: 'goto', x: 2500, y: 3260, radius: 130, text: 'Pick up the package at the Docks' },
-      { kind: 'timedGoto', x: 3600, y: 700, radius: 130, seconds: 75, text: 'Deliver to North Hills before the clock runs out' },
-    ],
+    id: 'midnight-run',
+    title: 'Chapter 6 — Midnight Run',
+    briefing: 'One crate, Docks to North Hills, seventy-five seconds, no excuses. Miss the window and you start the run again.',
     reward: 1200,
+    steps: [
+      { kind: 'goto', marker: 'docksPickup', text: 'Pick up the crate at the Docks' },
+      { kind: 'timed', marker: 'northHillsDrop', seconds: 75, text: 'Deliver to North Hills — 75 seconds' },
+    ],
   },
   {
-    id: 'm7', chapter: 7, title: 'Silent Pickup',
-    brief: 'A contact waits at Sunset Pier. Get there clean — any wanted star and the deal is off.',
-    intro: 'The Pier at dawn. One quiet handoff, no sirens. The Salt Kings have eyes on the Boardwalk — stay invisible.',
-    steps: [
-      { kind: 'stealth', x: 300, y: 1500, radius: 140, text: 'Reach Sunset Pier with NO wanted stars' },
-      { kind: 'stealth', x: 1250, y: 750, radius: 130, text: 'Bring the handoff home clean — no wanted stars' },
-    ],
+    id: 'silent-pickup',
+    title: 'Chapter 7 — Silent Pickup',
+    briefing: 'The last job. A handoff on Sunset Pier, and it only happens clean: bring it home with zero stars, or the deal is off.',
     reward: 1800,
+    steps: [
+      { kind: 'goto', marker: 'sunsetPier', text: 'Reach Sunset Pier' },
+      { kind: 'stealth', marker: 'safehouse', text: 'Bring the handoff home — zero wanted stars' },
+    ],
   },
 ];
 
-export const SIDE_JOBS = [
-  { id: 'taxi', title: 'Taxi Fare', text: 'Pick up the fare and drop them off', pay: 150 },
-  { id: 'delivery', title: 'Courier Run', text: 'Deliver the parcel across town', pay: 200 },
-  { id: 'vigilante', title: 'Vigilante', text: 'Stop the getaway car', pay: 350 },
-  { id: 'repo', title: 'Repo Run', text: 'Steal a car and deliver it to the Eastside garage', pay: 500 },
-];
+export const JOBS = {
+  taxi: { title: 'Taxi fare', pay: 120, blurb: 'Pick up the fare and drop them off.' },
+  courier: { title: 'Courier dash', pay: 150, blurb: 'A timed drop, 45 seconds.' },
+  vigilante: { title: 'Vigilante', pay: 350, blurb: 'Ram the target car three times.' },
+  repo: { title: 'Repo run', pay: 500, blurb: 'Steal any car, deliver it to the Eastside garage.' },
+};
 
-export function makeMissionState() {
+const STEP_RADIUS = 60;
+const ZONE_RADIUS = 70;
+
+export function createMissions() {
   return {
-    index: 0, // which story mission is active
+    chapter: 0,
     step: 0,
-    active: false,
-    done: false,
-    stepProgress: 0,
     stepTimer: 0,
-    eliminateCount: 0,
-    message: '',
-    messageTimer: 0,
-    sideJob: null,
-    sideStep: 0,
-    sideTarget: null,
-    completed: [], // ids of finished story missions
+    stepHeld: 0,
+    spotted: false,
+    completed: [],
+    cash: 0,
+    job: null,
+    jobTimer: 0,
+    jobHeld: 0,
+    jobHits: 0,
+    jobTarget: null,
   };
 }
 
-export function currentMission(state) {
-  return STORY[state.index] || null;
+export function currentChapter(state) {
+  return state.chapter < CHAPTERS.length ? CHAPTERS[state.chapter] : null;
 }
 
+export function currentStep(state) {
+  const chapter = currentChapter(state);
+  if (!chapter) return null;
+  return chapter.steps[state.step] ?? null;
+}
+
+/** The marker the HUD and the minimap should point at, or null. */
+export function stepMarker(state) {
+  const step = currentStep(state);
+  if (step && step.marker) return MARKERS[step.marker];
+  if (state.job && state.job.marker) return MARKERS[state.job.marker];
+  return null;
+}
+
+/** The objective line the HUD shows. */
 export function objectiveText(state) {
-  if (state.sideJob) {
-    const job = SIDE_JOBS.find((j) => j.id === state.sideJob);
-    if (job) {
-      if (job.id === 'repo' && state.sideStep === 0) return 'Repo Run: steal any car first';
-      if (job.id === 'repo') return 'Repo Run: deliver the car to the Eastside garage';
-      return `${job.title}: ${job.text}`;
-    }
-  }
-  const m = currentMission(state);
-  if (!m) return 'Story complete — free roam. Press M for a side job.';
-  if (!state.active) return `Next: ${m.title} — press M to start`;
-  const step = m.steps[state.step];
-  return step ? `${m.title}: ${step.text}` : m.title;
+  const chapter = currentChapter(state);
+  const step = currentStep(state);
+  if (chapter && step) return `${chapter.title}: ${step.text}`;
+  if (state.job) return `${JOBS[state.job.kind].title}: ${state.job.text}`;
+  if (!chapter) return 'All chapters complete — Port Solano is yours. Side jobs still pay.';
+  return 'Press M for missions.';
 }
 
-export function startMission(state, player) {
-  const m = currentMission(state);
-  if (!m || state.active) return false;
-  state.active = true;
-  state.step = 0;
-  state.stepProgress = 0;
-  state.stepTimer = 0;
-  state.eliminateCount = 0;
-  state.message = m.intro;
-  state.messageTimer = 6;
-  if (m.startWanted) {
-    player.wanted = Math.max(player.wanted, m.startWanted);
-  }
-  return true;
+function markerAt(state, name) {
+  return MARKERS[name];
 }
 
-export function showMessage(state, text, seconds) {
-  state.message = text;
-  state.messageTimer = seconds || 4;
+function near(x, y, marker, radius) {
+  return Math.hypot(x - marker.x, y - marker.y) < radius;
 }
 
-// Advance one step; returns 'complete' when the mission finishes, else null.
-export function updateMission(state, ctx, dt) {
-  if (state.messageTimer > 0) state.messageTimer -= dt;
-  const m = currentMission(state);
-  if (!m || !state.active) return null;
-  const step = m.steps[state.step];
-  if (!step) return null;
-  const px = ctx.player.x;
-  const py = ctx.player.y;
-  const dist = (x, y) => Math.hypot(px - x, py - y);
+/**
+ * Advance one step of the story. `snap` is the world's snapshot:
+ * { x, y, inCar, wanted }. Returns an array of event strings:
+ * 'step' (a step finished), 'mission' (a chapter finished, reward paid),
+ * 'timeout' (the timed step ran out — back to its pickup), 'spotted' (arrived
+ * hot on a stealth step). The timer on a timed step arms when the step starts.
+ */
+export function updateMissions(state, snap, dt) {
+  const events = [];
+  const chapter = currentChapter(state);
+  if (!chapter) return events;
+  const step = chapter.steps[state.step];
+  if (!step) return events;
 
-  if (step.kind === 'stealCar') {
-    if (ctx.player.inCar) return advance(state);
-  } else if (step.kind === 'goto') {
-    if (dist(step.x, step.y) < step.radius) {
-      if (m.wantedOnPickup && state.step === 0) {
-        ctx.player.wanted = Math.max(ctx.player.wanted, m.wantedOnPickup);
-        showMessage(state, 'Package grabbed — the cops noticed!', 4);
-      }
-      return advance(state);
+  if (step.kind === 'goto') {
+    if (near(snap.x, snap.y, markerAt(state, step.marker), STEP_RADIUS)) {
+      state.step += 1;
+      state.stepHeld = 0;
+      events.push('step');
     }
-  } else if (step.kind === 'wanted') {
-    if (ctx.player.wanted === 0) return advance(state);
-  } else if (step.kind === 'eliminate') {
-    if (state.eliminateCount >= step.count) return advance(state);
-  } else if (step.kind === 'wait') {
-    if (dist(step.x || 2450, step.y || 1150) < 130) {
-      state.stepTimer += dt;
-      if (state.stepTimer >= step.seconds) return advance(state);
-    } else {
-      state.stepTimer = 0;
+  } else if (step.kind === 'steal') {
+    if (snap.inCar) {
+      state.step += 1;
+      events.push('step');
     }
-  } else if (step.kind === 'timedGoto') {
-    // Countdown delivery: the clock starts on first entry into the step
-    // (advance() resets stepTimer to 0) and running out sends Lucia back
-    // to the pickup — a real fail-and-retry loop, not a free pass.
-    if (state.stepTimer <= 0) state.stepTimer = step.seconds;
+  } else if (step.kind === 'driveTo') {
+    if (snap.inCar && near(snap.x, snap.y, markerAt(state, step.marker), STEP_RADIUS)) {
+      state.step += 1;
+      events.push('step');
+    }
+  } else if (step.kind === 'timed') {
+    if (state.stepTimer <= 0 && !state.armed) {
+      state.stepTimer = step.seconds;
+      state.armed = true;
+    }
     state.stepTimer -= dt;
-    if (dist(step.x, step.y) < step.radius) return advance(state);
     if (state.stepTimer <= 0) {
-      state.stepTimer = 0;
+      // The window closed: back to the pickup step to run it again.
       state.step = 0;
-      showMessage(state, 'Too slow — the buyer walked. Back to the Docks!', 4);
-      return 'step';
+      state.stepTimer = 0;
+      state.armed = false;
+      events.push('timeout');
+    } else if (near(snap.x, snap.y, markerAt(state, step.marker), STEP_RADIUS)) {
+      state.step += 1;
+      state.stepTimer = 0;
+      state.armed = false;
+      events.push('step');
     }
   } else if (step.kind === 'stealth') {
-    // Only counts while clean: arriving with any wanted star does not
-    // complete the step — lose the heat and come back.
-    if (dist(step.x, step.y) < step.radius) {
-      if (ctx.player.wanted === 0) return advance(state);
-      if (state.messageTimer <= 0) showMessage(state, 'Spotted! Lose the heat, then come back clean.', 3);
+    if (near(snap.x, snap.y, markerAt(state, step.marker), STEP_RADIUS)) {
+      if (snap.wanted === 0) {
+        state.step += 1;
+        state.spotted = false;
+        events.push('step');
+      } else if (!state.spotted) {
+        state.spotted = true;
+        events.push('spotted');
+      }
     }
-  } else if (step.kind === 'escape') {
-    if (ctx.player.wanted === 0 && dist(1250, 750) < 130) return advance(state);
+  } else if (step.kind === 'wait') {
+    if (near(snap.x, snap.y, markerAt(state, step.marker), ZONE_RADIUS)) {
+      state.stepHeld += dt;
+      if (state.stepHeld >= step.seconds) {
+        state.step += 1;
+        state.stepHeld = 0;
+        events.push('step');
+      }
+    } else {
+      state.stepHeld = 0;
+    }
+  } else if (step.kind === 'loseHeat') {
+    if (snap.wanted === 0) {
+      state.step += 1;
+      events.push('step');
+    }
   }
-  return null;
+
+  if (state.step >= chapter.steps.length) {
+    state.cash += chapter.reward;
+    state.completed.push(chapter.id);
+    state.chapter += 1;
+    state.step = 0;
+    state.stepTimer = 0;
+    state.stepHeld = 0;
+    state.armed = false;
+    state.spotted = false;
+    events.push('mission');
+  }
+  return events;
 }
 
-function advance(state) {
-  const m = currentMission(state);
-  state.step += 1;
-  state.stepTimer = 0;
-  if (state.step >= m.steps.length) {
-    state.completed.push(m.id);
-    state.active = false;
-    state.done = state.index >= STORY.length - 1;
-    state.index += 1;
-    return 'complete';
+/** Start a side job. `spot` is where the job's first marker sits. */
+export function startJob(state, kind, spot) {
+  const job = { kind, text: JOBS[kind].blurb, marker: spot?.marker ?? null, x: spot?.x ?? 0, y: spot?.y ?? 0 };
+  if (kind === 'taxi') {
+    job.text = 'Pick up the fare';
+    job.marker = null;
+  } else if (kind === 'courier') {
+    job.text = 'Deliver the parcel — 45 seconds';
+    job.marker = 'marinaDrop';
+    state.jobTimer = 45;
+  } else if (kind === 'vigilante') {
+    job.text = 'Ram the target car 3 times';
+    job.marker = null;
+  } else if (kind === 'repo') {
+    job.text = 'Steal any car, deliver it to the Eastside garage';
+    job.marker = 'eastsideGarage';
   }
-  return 'step';
-}
-
-// The target point the minimap and the world arrow should point at.
-export function missionTarget(state) {
-  const m = currentMission(state);
-  if (state.sideJob && state.sideTarget) return state.sideTarget;
-  if (!m || !state.active) return null;
-  const step = m.steps[state.step];
-  if (!step) return null;
-  if (step.kind === 'goto' || step.kind === 'wait' || step.kind === 'timedGoto' || step.kind === 'stealth') return { x: step.x || 2450, y: step.y || 1150, radius: step.radius || 130 };
-  if (step.kind === 'escape') return { x: 1250, y: 750, radius: 130 };
-  return null;
-}
-
-export function startSideJob(state, rng, player) {
-  if (state.sideJob || (currentMission(state) && state.active)) return null;
-  const job = SIDE_JOBS[Math.floor(rng() * SIDE_JOBS.length)];
-  state.sideJob = job.id;
-  state.sideStep = 0;
-  if (job.id === 'repo') {
-    // Phase 0: steal a car first — no destination marker until Lucia has one.
-    state.sideTarget = null;
-    showMessage(state, `Repo Run: steal any car, then deliver it — $${job.pay}`, 5);
-    return job;
-  }
-  // Pick a destination far from the player, on a road.
-  const dest = {
-    x: 400 + Math.floor(rng() * 11) * 400,
-    y: 300 + Math.floor(rng() * 8) * 400,
-  };
-  state.sideTarget = dest;
-  showMessage(state, `${job.title}: ${job.text} — $${job.pay}`, 5);
+  state.job = job;
+  state.jobHeld = 0;
+  state.jobHits = 0;
   return job;
 }
 
-export function updateSideJob(state, ctx, dt) {
-  if (!state.sideJob) return null;
-  // Repo Run phase 0: wait until Lucia is in a car, then set the garage target.
-  if (state.sideJob === 'repo' && state.sideStep === 0) {
-    if (ctx.player.inCar) {
-      state.sideStep = 1;
-      state.sideTarget = { x: 3200, y: 3100 };
-      showMessage(state, 'Repo target secured — deliver it to the Eastside garage', 4);
+export function cancelJob(state) {
+  state.job = null;
+  state.jobTimer = 0;
+  state.jobHeld = 0;
+  state.jobHits = 0;
+  state.jobTarget = null;
+}
+
+/**
+ * Advance the active side job. Returns 'jobDone' when it pays, 'jobFail' when
+ * a timed job runs out. `snap` is the world snapshot; `rammed` is true on a
+ * frame the player rammed the vigilante target.
+ */
+export function updateJob(state, snap, dt, rammed) {
+  if (!state.job) return null;
+  const job = state.job;
+  if (job.kind === 'taxi') {
+    if (!job.pickedUp) {
+      if (near(snap.x, snap.y, { x: job.x, y: job.y }, STEP_RADIUS)) {
+        job.pickedUp = true;
+        job.text = 'Drop the fare at the Marina';
+        job.marker = 'marinaDrop';
+      }
+    } else if (near(snap.x, snap.y, markerAt(state, 'marinaDrop'), STEP_RADIUS)) {
+      state.cash += JOBS.taxi.pay;
+      cancelJob(state);
+      return 'jobDone';
     }
-    return null;
-  }
-  const target = state.sideTarget;
-  if (!target) return null;
-  const dist = Math.hypot(ctx.player.x - target.x, ctx.player.y - target.y);
-  if (dist < 120) {
-    const job = SIDE_JOBS.find((j) => j.id === state.sideJob);
-    state.sideJob = null;
-    state.sideTarget = null;
-    return job;
+  } else if (job.kind === 'courier') {
+    state.jobTimer -= dt;
+    if (state.jobTimer <= 0) {
+      cancelJob(state);
+      return 'jobFail';
+    }
+    if (near(snap.x, snap.y, markerAt(state, 'marinaDrop'), STEP_RADIUS)) {
+      state.cash += JOBS.courier.pay;
+      cancelJob(state);
+      return 'jobDone';
+    }
+  } else if (job.kind === 'vigilante') {
+    if (rammed) state.jobHits += 1;
+    if (state.jobHits >= 3) {
+      state.cash += JOBS.vigilante.pay;
+      cancelJob(state);
+      return 'jobDone';
+    }
+  } else if (job.kind === 'repo') {
+    if (snap.inCar && near(snap.x, snap.y, markerAt(state, 'eastsideGarage'), STEP_RADIUS)) {
+      state.cash += JOBS.repo.pay;
+      cancelJob(state);
+      return 'jobDone';
+    }
   }
   return null;
 }

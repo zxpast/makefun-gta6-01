@@ -1,58 +1,45 @@
-// Solano Heat — boot and the one loop: input is read every frame, the world
-// advances in fixed 1/60 s steps, and the renderer paints what is there. The
-// game moves between title, play, paused, help and wasted screens.
+// Solano Heat — boot and the one loop.
 //
-// ?seed=N fixes the city. ?shot=start|drive|chase|mission (with &seed=N) stages
-// that scene instead of running the loop, paints it twice and sets
-// window.__shotReady for a screenshot.
-import { STEP, VIEW_H, VIEW_W } from './config.js';
-import { createGame, EVENT_CASH, EVENT_CRASH, EVENT_DEATH, EVENT_EXPLOSION, EVENT_MISSION, EVENT_PICKUP, EVENT_SHOT, EVENT_WANTED_UP } from './world.js';
-import { Input, ScriptedInput } from './input.js';
-import { createRenderer, SCREEN_HELP, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
-import { SoundBank } from './audio.js';
-import { loadGame, saveGame } from './save.js';
+// Input is read every frame, the world advances in fixed 1/60 s steps (several
+// in a slow frame, none in a fast one), and the renderer paints what is there.
+// The game moves between four screens: title, play, paused and the jobs menu.
+// Busted is not a screen: the police fine you, drop you at the hospital and
+// the city keeps turning.
+//
+// ?seed=N fixes the traffic pattern. ?shot=start|drive|chase|mission (with
+// &seed=N) stages that scene instead of running the loop, paints it twice and
+// sets window.__shotReady for a screenshot.
+import { STEP } from './config.js';
+import { createRandom } from './random.js';
+import { CHAPTERS } from './missions.js';
+import { createWorld, EVENT_BUSTED, EVENT_CRIME, EVENT_JOB_DONE, EVENT_JOB_FAIL, EVENT_MISSION, EVENT_PUNCH, EVENT_SPOTTED, EVENT_STEP, EVENT_TIMEOUT, EVENT_WANTED_UP } from './world.js';
+import { ACTION_CONFIRM, ACTION_MISSIONS, ACTION_PAUSE, ACTION_SOUND, createInput } from './input.js';
+import { createRenderer, SCREEN_MISSIONS, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+import { createAudio } from './audio.js';
+import { readSave, writeSave } from './save.js';
 import { stageShot } from './shots.js';
 
+/** The longest frame the loop catches up on; a longer stall (a hidden tab) is dropped, not replayed. */
 const MAX_FRAME = 0.25;
 
 const params = new URLSearchParams(window.location.search);
 const shot = params.get('shot');
 const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
-const seed = Number.isInteger(seedParam) ? seedParam : 1337;
+const seed = Number.isInteger(seedParam) ? seedParam : Math.floor(Math.random() * 4294967296);
 
 const canvas = document.getElementById('game');
 const status = document.getElementById('status');
-const game = createGame(seed);
+const world = createWorld(createRandom(seed));
 const renderer = createRenderer(canvas);
-const sounds = new SoundBank();
-
-function applySave(data) {
-  if (!data) return;
-  const p = game.player;
-  p.x = data.player.x;
-  p.y = data.player.y;
-  p.money = data.player.money;
-  p.respect = data.player.respect;
-  p.health = data.player.health;
-  p.armor = data.player.armor;
-  p.weapon = data.player.weapon || 'pistol';
-  p.ammo = data.player.ammo || p.ammo;
-  p.kills = data.player.kills || 0;
-  p.carsStolen = data.player.carsStolen || 0;
-  p.distanceDriven = data.player.distanceDriven || 0;
-  game.missions.index = data.missionIndex || 0;
-  game.missions.completed = data.completed || [];
-  game.clockMinutes = data.clockMinutes || game.clockMinutes;
-  game.best = data.best || 0;
-  game.camera.x = Math.max(0, Math.min(4800 - VIEW_W, p.x - VIEW_W / 2));
-  game.camera.y = Math.max(0, Math.min(3600 - VIEW_H, p.y - VIEW_H / 2));
-}
+const audio = createAudio();
+const saved = readSave();
+if (saved) world.applySave(saved);
 
 function runShot(name) {
-  const scene = stageShot(name, game);
+  const scene = stageShot(name, world);
   let painted = 0;
   function paint() {
-    renderer.draw(game, scene.screen, game.best);
+    renderer.draw(world.state, scene.screen, scene.extra);
     painted += 1;
     if (painted < 2) requestAnimationFrame(paint);
     else window.__shotReady = true;
@@ -61,138 +48,155 @@ function runShot(name) {
 }
 
 function runGame() {
-  const input = new Input(canvas);
+  const input = createInput(canvas);
   let screen = SCREEN_TITLE;
   let accumulator = 0;
   let last = performance.now();
-  let saveTimer = 0;
-  let titleTimer = 0;
-  let overAt = 0;
-  const idleInput = new ScriptedInput();
-  applySave(loadGame());
+  world.state.demo = true;
 
+  // Screen readers (and anyone watching the page's text) hear the screen changes and each hit.
   function announce(message) {
     status.textContent = message;
   }
 
+  function persist() {
+    writeSave(world.saveData());
+  }
+
   function startGame() {
-    sounds.resume();
+    world.state.demo = false;
+    world.reset();
+    const again = readSave();
+    if (again) world.applySave(again);
+    accumulator = 0;
     screen = SCREEN_PLAY;
-    announce('Playing. Lucia Vega, Port Solano.');
+    audio.unlock();
+    announce(`Playing. Chapter ${world.state.missions.chapter + 1} of ${CHAPTERS.length}. ${world.objective()}`);
   }
 
-  function respawn() {
-    const player = game.player;
-    player.money = Math.floor(player.money * 0.9);
-    player.health = 100;
-    player.armor = 50;
-    player.dead = false;
-    player.deathTimer = 0;
-    player.wanted = 0;
-    player.x = 1250;
-    player.y = 820;
-    if (player.inCar) player.inCar = null;
-    game.camera.x = Math.max(0, Math.min(4800 - VIEW_W, player.x - VIEW_W / 2));
-    game.camera.y = Math.max(0, Math.min(3600 - VIEW_H, player.y - VIEW_H / 2));
-    screen = SCREEN_PLAY;
-    saveGame(game);
-    announce('Back on your feet at the Safehouse.');
+  function openMenu() {
+    screen = SCREEN_MISSIONS;
+    announce('Jobs menu. Press 1 to 4 for a side job, M to close.');
   }
 
-  // Mouse position in world coordinates, for aiming.
-  function aimWorld() {
-    const scale = Math.min(window.innerWidth / VIEW_W, window.innerHeight / VIEW_H);
-    const ox = (window.innerWidth - VIEW_W * scale) / 2;
-    const oy = (window.innerHeight - VIEW_H * scale) / 2;
-    const sx = (input.mouseX - ox) / scale;
-    const sy = (input.mouseY - oy) / scale;
-    game.aimScreen = { x: sx, y: sy };
-    return { x: game.camera.x + sx, y: game.camera.y + sy };
+  function handleEvents(events) {
+    if (events & EVENT_MISSION) {
+      audio.missionComplete();
+      persist();
+      announce(`Mission complete. ${world.objective()}`);
+    }
+    if (events & EVENT_JOB_DONE) {
+      audio.missionComplete();
+      persist();
+      announce('Job done. Paid in full.');
+    }
+    if (events & EVENT_BUSTED) {
+      audio.busted();
+      persist();
+      announce('Busted. The police took a fine and dropped you at the hospital.');
+    }
+    if (events & EVENT_TIMEOUT) announce('Too slow. The delivery window closed.');
+    if (events & EVENT_SPOTTED) announce('Spotted. Lose the heat, then come back clean.');
+    if (events & EVENT_STEP) announce(world.objective());
+    if (events & EVENT_JOB_FAIL) announce('Job failed.');
+    if (events & EVENT_PUNCH) audio.punch();
+    if (events & EVENT_CRIME) audio.denied();
+    if (events & EVENT_WANTED_UP) announce(`Wanted level ${world.state.wanted}.`);
   }
 
-  function handleKeys() {
-    if (input.wasPressed('pause')) {
-      if (screen === SCREEN_PLAY) {
+  function handleActions(actions) {
+    if (actions & ACTION_SOUND) {
+      const muted = audio.toggleMuted();
+      announce(muted ? 'Sound off.' : 'Sound on.');
+      return;
+    }
+    if (screen === SCREEN_TITLE) {
+      if (actions & ACTION_CONFIRM) startGame();
+      return;
+    }
+    if (screen === SCREEN_PLAY) {
+      if (actions & ACTION_PAUSE) {
         screen = SCREEN_PAUSED;
-        saveGame(game);
         announce('Paused.');
-      } else if (screen === SCREEN_PAUSED) {
+      } else if (actions & ACTION_MISSIONS) {
+        openMenu();
+      }
+      return;
+    }
+    if (screen === SCREEN_PAUSED) {
+      if (actions & (ACTION_PAUSE | ACTION_CONFIRM)) {
         screen = SCREEN_PLAY;
         announce('Playing.');
-      } else if (screen === SCREEN_HELP) {
-        screen = SCREEN_PAUSED;
       }
+      return;
     }
-    if (input.wasPressed('mission') && screen === SCREEN_PLAY) {
-      // The world handles M; nothing to do here.
-    }
-    if (screen === SCREEN_TITLE && (input.wasPressed('shoot') || input.pressed.has('Space') || input.pressed.has('Enter'))) {
-      startGame();
-    } else if (screen === SCREEN_OVER && performance.now() - overAt > 1500 && (input.wasPressed('shoot') || input.pressed.has('Space') || input.pressed.has('Enter'))) {
-      respawn();
-    }
-    if (input.pressed.has('KeyH') && (screen === SCREEN_PLAY || screen === SCREEN_HELP)) {
-      screen = screen === SCREEN_HELP ? SCREEN_PLAY : SCREEN_HELP;
+    if (screen === SCREEN_MISSIONS) {
+      if (actions & (ACTION_MISSIONS | ACTION_PAUSE | ACTION_CONFIRM)) {
+        screen = SCREEN_PLAY;
+        announce('Playing.');
+      }
     }
   }
 
-  function step() {
-    const aim = aimWorld();
-    const events = game.step(STEP, input, aim);
-    if (events & EVENT_SHOT) sounds.gunshot();
-    if (events & EVENT_PICKUP) sounds.pickup();
-    if (events & EVENT_CASH) sounds.cash();
-    if (events & EVENT_WANTED_UP) sounds.wantedUp();
-    if (events & EVENT_MISSION) sounds.missionDone();
-    if (events & EVENT_CRASH) sounds.crash();
-    if (events & EVENT_EXPLOSION) sounds.explosion();
-    if (events & EVENT_DEATH) {
-      screen = SCREEN_OVER;
-      overAt = performance.now();
-      saveGame(game);
-      announce('Wasted. Press Space to try again.');
+  function step(actions) {
+    if (screen === SCREEN_TITLE) {
+      world.step(STEP, null);
+      return;
     }
-    // Engine hum + siren follow the game state.
-    const driving = !!game.player.inCar;
-    sounds.engine(driving ? Math.abs(game.player.inCar.speed) / 430 : 0, driving);
-    sounds.siren(STEP, game.policeCars.length > 0 && Math.hypot(game.policeCars[0].x - game.player.x, game.policeCars[0].y - game.player.y) < 800);
-    saveTimer += STEP;
-    if (saveTimer > 10) {
-      saveTimer = 0;
-      saveGame(game);
-    }
+    const events = world.step(STEP, { move: input.direction(), running: input.running(), actions });
+    handleEvents(events);
+    const car = world.state.player.inCar;
+    audio.engine(car ? Math.abs(car.speed) / car.topSpeed : 0, !!car);
+    audio.siren(world.state.wanted, STEP);
   }
 
   function frame(now) {
     requestAnimationFrame(frame);
     accumulator += Math.min((now - last) / 1000, MAX_FRAME);
     last = now;
-    handleKeys();
-    if (screen === SCREEN_PLAY) {
-      while (accumulator >= STEP) {
-        step();
+    const actions = input.takeActions();
+    handleActions(actions);
+    if (screen === SCREEN_TITLE || screen === SCREEN_PLAY) {
+      // One-shot presses reach the world on the first sub-step only.
+      let first = true;
+      while (accumulator >= STEP && (screen === SCREEN_TITLE || screen === SCREEN_PLAY)) {
+        step(first ? actions : 0);
+        first = false;
         accumulator -= STEP;
-        if (screen !== SCREEN_PLAY) break;
       }
     } else {
       accumulator = 0;
-      // The title screen's city idles: step the world with scripted no-input.
-      if (screen === SCREEN_TITLE) {
-        titleTimer += STEP;
-        if (titleTimer >= STEP) {
-          titleTimer = 0;
-          game.step(STEP, idleInput, null);
-        }
-      }
     }
-    renderer.draw(game, screen, game.best);
-    input.endFrame();
+    const missions = world.state.missions;
+    renderer.draw(world.state, screen, {
+      objective: world.objective(),
+      step: world.currentStepInfo(),
+      marker: world.marker(),
+      timedLeft: missions.stepTimer,
+      heldSeconds: missions.stepHeld,
+      chapters: CHAPTERS,
+      chapterIndex: missions.chapter,
+      completed: missions.completed,
+    });
   }
 
+  // The jobs menu takes number keys: 1 taxi, 2 courier, 3 vigilante, 4 repo.
+  window.addEventListener('keydown', (event) => {
+    if (screen !== SCREEN_MISSIONS) return;
+    const kinds = { Digit1: 'taxi', Digit2: 'courier', Digit3: 'vigilante', Digit4: 'repo' };
+    const kind = kinds[event.code];
+    if (!kind) return;
+    const job = world.beginJob(kind);
+    if (job) {
+      screen = SCREEN_PLAY;
+      announce(`${job.title} started. ${job.blurb}`);
+    }
+  });
+
+  // Leaving the tab pauses a running game rather than letting the city move unseen.
   document.addEventListener('visibilitychange', () => {
     if (document.hidden && screen === SCREEN_PLAY) {
       screen = SCREEN_PAUSED;
-      saveGame(game);
       announce('Paused.');
     }
   });
