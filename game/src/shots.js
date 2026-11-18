@@ -97,11 +97,13 @@ function frameHeli(sim) {
   if (!h.active) return;
   const fx = Math.cos(p.angle);
   const fz = Math.sin(p.angle);
-  const rx = -fz;
-  const rz = fx;
-  h.x = p.x + fx * 45 + rx * 35;
-  h.z = p.z + fz * 45 + rz * 35;
-  h.y = 22;
+  // Straight ahead in the open sky corridor above the road, low enough
+  // to sit inside the chase camera's frame: the chase camera looks
+  // almost level, so a helicopter at its real 55 m hovers just above the
+  // top of the frame. Visible in every shot, spotlight on the car.
+  h.x = p.x + fx * 26;
+  h.z = p.z + fz * 26;
+  h.y = 10;
   h.angle = p.angle;
 }
 

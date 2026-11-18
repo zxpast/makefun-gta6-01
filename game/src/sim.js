@@ -252,7 +252,7 @@ export function createSim(random, opts) {
     hit.fleeing = 3;
     hit.down = 1.2;
     scarePeds(state.player.x, state.player.z, 30);
-    if (addWanted(WANTED.punch || 1)) events |= EVENT_WANTED_UP | EVENT_CRIME;
+    if (addWanted(WANTED.punch)) events |= EVENT_WANTED_UP | EVENT_CRIME;
     return events;
   }
 

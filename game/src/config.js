@@ -80,6 +80,7 @@ export const WANTED = {
   stealCar: 1,
   hitPed: 1,
   shoot: 1,
+  punch: 1,
   decaySeconds: 14,
   max: 5,
 };

@@ -91,7 +91,7 @@ export const CHAPTERS = [
     night: true,
     steps: [
       { kind: 'goto', marker: 'pierEnd', text: 'Pick up the package at Pier End' },
-      { kind: 'timed', marker: 'northHillsDrop', seconds: 150, text: 'Deliver to North Hills — 150 seconds, heli overhead' },
+      { kind: 'timed', marker: 'northHillsDrop', seconds: 150, text: 'Deliver to North Hills in 150 seconds' },
     ],
   },
 ];

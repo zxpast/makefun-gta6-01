@@ -8,7 +8,7 @@
 // mission a player probably cannot finish either.
 import { STEP } from './config.js';
 import { routeOnRoads } from './city.js';
-import { angleDelta, clamp } from './random.js';
+import { angleDelta } from './random.js';
 import { ACTION_ENTER } from './sim.js';
 
 function angleDiff(want, have) {
@@ -212,5 +212,3 @@ export function driveFree(sim, seconds, random) {
   }
   return { distance, ok: true, reason: '' };
 }
-
-export { clamp };
