@@ -1,22 +1,24 @@
 // Solano Heat — a tiny static server for game/ (Node 22, standard library only).
 //
-// A development convenience, not a web server for the internet: run `node serve.ts`
-// and open http://localhost:8080 to play the game. It serves only files under
-// game/, sends the MIME types a browser game needs, and refuses any path that
-// climbs out of game/. `--port <n>` picks another port.
+// A development convenience, not a web server for the internet: run
+// `node serve.ts` and open http://localhost:8080 to play the game. It
+// serves only files under game/, sends the MIME types a browser game
+// needs, and refuses any path that climbs out of game/.
+// `--port <n>` picks another port.
 import { createReadStream, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const gameRoot = resolve(fileURLToPath(new URL('./game', import.meta.url)));
-const port = pickPort(process.argv.slice(2));
 
 function pickPort(args) {
   const at = args.indexOf('--port');
   const wanted = at === -1 ? 8080 : Number(args[at + 1]);
   return Number.isInteger(wanted) && wanted > 0 && wanted < 65536 ? wanted : 8080;
 }
+
+const port = pickPort(process.argv.slice(2));
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -42,13 +44,6 @@ function mimeFor(file) {
   return TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream';
 }
 
-function resolveInsideGame(pathname) {
-  const cleaned = normalize(pathname);
-  const file = resolve(join(gameRoot, cleaned));
-  if (file !== gameRoot && !file.startsWith(gameRoot + sep)) return null;
-  return file;
-}
-
 const server = createServer((request, response) => {
   let pathname;
   try {
@@ -58,8 +53,8 @@ const server = createServer((request, response) => {
     return;
   }
   if (pathname.endsWith('/')) pathname += 'index.html';
-  const file = resolveInsideGame(pathname);
-  if (file === null) {
+  const file = resolve(join(gameRoot, normalize(pathname)));
+  if (file !== gameRoot && !file.startsWith(gameRoot + sep)) {
     response.writeHead(403).end('forbidden');
     return;
   }

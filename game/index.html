@@ -5,14 +5,87 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Solano Heat — Port Solano</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #0d0a14; }
-  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0d0a14; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #scene { position: fixed; inset: 0; }
+  #scene canvas { display: block; width: 100%; height: 100%; }
+  #hud { position: fixed; inset: 0; pointer-events: none; color: #f2ede4; z-index: 5; }
+  #hud-top { position: absolute; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; padding: 12px 16px; background: linear-gradient(rgba(10,8,16,0.75), rgba(10,8,16,0)); }
+  #hud-cash { font-size: 28px; font-weight: 700; color: #f2c94c; }
+  #hud-health { font-size: 13px; color: #a89f92; }
+  #hud-stars { font-size: 24px; letter-spacing: 2px; }
+  #hud-clock, #hud-district { font-size: 14px; text-align: right; }
+  #hud-objective { position: absolute; top: 74px; left: 16px; max-width: 640px; background: rgba(12,10,18,0.85); padding: 8px 12px; font-size: 15px; border-left: 3px solid #f2c94c; }
+  #hud-timer { position: absolute; top: 118px; left: 50%; transform: translateX(-50%); background: rgba(12,10,18,0.85); padding: 6px 14px; font-size: 15px; font-weight: 700; color: #f2c94c; }
+  #hud-timer:empty { display: none; }
+  #hud-bottom { position: absolute; left: 16px; bottom: 14px; font-size: 15px; background: rgba(12,10,18,0.7); padding: 8px 12px; }
+  #hud-speed { font-size: 22px; font-weight: 700; }
+  #hud-nos { color: #6fce7e; }
+  #hud-radio { color: #a89f92; }
+  #hud-minimap { position: absolute; right: 16px; bottom: 14px; width: 220px; height: 148px; border: 2px solid rgba(242,237,228,0.4); background: #14101c; }
+  #hud-banner { position: absolute; top: 170px; left: 50%; transform: translateX(-50%); background: rgba(242,201,76,0.95); color: #1a1420; padding: 10px 26px; text-align: center; display: none; }
+  #hud-banner-text { font-size: 24px; font-weight: 800; }
+  #hud-banner-sub { font-size: 14px; }
+  #hud-hint { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); color: #f2c94c; font-size: 15px; display: none; }
+  .panel { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 620px; max-width: 92vw; background: rgba(12,10,18,0.94); border: 2px solid #f2c94c; padding: 24px 28px; display: none; pointer-events: auto; }
+  .panel h1 { margin: 0 0 10px; color: #f2c94c; font-size: 40px; }
+  .panel h2 { margin: 0 0 10px; color: #f2c94c; font-size: 28px; }
+  .panel p, .panel div { font-size: 16px; line-height: 1.5; color: #d8d0c2; }
+  .panel .muted { color: #a89f92; }
+  .panel .prompt { color: #f2c94c; margin-top: 14px; font-weight: 700; }
   /* Read aloud, never shown: the status line screen readers announce. */
   #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 </style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three/three.module.min.js"
+  }
+}
+</script>
 </head>
 <body>
-<canvas id="game" aria-label="Solano Heat: an open-world crime game. Walk with W A S D, steal a car with E, start a mission with M."></canvas>
+<div id="scene" aria-label="Solano Heat: a 3D open-world crime game. Walk with W A S D, steal a car with E, start a mission with M."></div>
+<div id="hud">
+  <div id="hud-top">
+    <div><div id="hud-cash">$0</div><div id="hud-health">Health 100</div></div>
+    <div><div id="hud-stars">☆☆☆☆☆</div><div id="hud-clock">20:00</div><div id="hud-district">Port Solano</div></div>
+  </div>
+  <div id="hud-objective"></div>
+  <div id="hud-timer"></div>
+  <div id="hud-bottom">
+    <div id="hud-speed">On foot</div>
+    <div id="hud-nos">NOS —</div>
+    <div id="hud-weapon">Pistol [∞]</div>
+    <div id="hud-radio">♪ SOL FM</div>
+  </div>
+  <canvas id="hud-minimap" width="220" height="148"></canvas>
+  <div id="hud-banner"><div id="hud-banner-text"></div><div id="hud-banner-sub"></div></div>
+  <div id="hud-hint">NEW HERE? Press M for jobs — walk up to a car and press E to steal it.</div>
+  <div class="panel" id="panel-title">
+    <h1>SOLANO HEAT</h1>
+    <p>Port Solano is yours — eight chapters, four side jobs, one city that never sleeps. Steal a car, lose the cops, get paid.</p>
+    <p>Sun-soaked 3D open-world crime — chase-cam driving, helicopter pursuits, roadblocks, radio and garage upgrades.</p>
+    <p class="muted">WASD drive / walk · E steal car · F shoot · Q weapon · Shift NOS in car · R radio · G garage · M jobs · 1-4 side jobs · P pause · N sound</p>
+    <p class="prompt">Press Space or click to start</p>
+  </div>
+  <div class="panel" id="panel-paused">
+    <h2>Paused</h2>
+    <p>The city waits for you.</p>
+    <p class="prompt">Press P to resume</p>
+  </div>
+  <div class="panel" id="panel-missions">
+    <h2>SOLANO HEAT — Jobs</h2>
+    <div id="missions-list"></div>
+    <p class="prompt">Press M to close · 1-4 to take a side job</p>
+  </div>
+  <div class="panel" id="panel-garage">
+    <h2>Eastside Garage</h2>
+    <div id="garage-list"></div>
+    <p id="garage-cash"></p>
+    <p class="muted">Weapons: buy SMG ($300) and Shotgun ($500) with keys 5 and 6 while here.</p>
+    <p class="prompt">Press G to close</p>
+  </div>
+</div>
 <p id="status" role="status" aria-live="polite"></p>
 <script type="module" src="./src/main.js"></script>
 </body>

@@ -1,9 +1,8 @@
-// Solano Heat — saving between visits.
-//
-// One small JSON blob in localStorage: the cash, which chapters are done, which
-// chapter is current, and the best (most cash held at once). Loading is
-// forgiving — a missing, broken or private-mode store just starts a new game.
-// Nothing here knows about the world; the caller hands it plain numbers.
+// Saving between visits: one small JSON blob in localStorage — the cash,
+// which chapters are done, which chapter is current, the garage and the
+// ammo. Loading is forgiving: a missing, broken or private-mode store
+// just starts a new game. Nothing here knows about the simulation; the
+// caller hands it plain numbers.
 import { SAVE_KEY } from './config.js';
 
 export function readSave() {
@@ -16,6 +15,8 @@ export function readSave() {
       cash: Number.isFinite(data.cash) ? data.cash : 0,
       chapter: Number.isInteger(data.chapter) ? data.chapter : 0,
       completed: Array.isArray(data.completed) ? data.completed : [],
+      garage: typeof data.garage === 'object' && data.garage !== null ? data.garage : null,
+      ammo: typeof data.ammo === 'object' && data.ammo !== null ? data.ammo : null,
       bestCash: Number.isFinite(data.bestCash) ? data.bestCash : 0,
     };
   } catch {
@@ -29,6 +30,8 @@ export function writeSave(save) {
       cash: save.cash,
       chapter: save.chapter,
       completed: save.completed,
+      garage: save.garage,
+      ammo: save.ammo,
       bestCash: save.bestCash,
     }));
     return true;
