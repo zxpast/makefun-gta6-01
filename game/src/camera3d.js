@@ -26,20 +26,26 @@ export function chaseCamera(px, pz, angle, prev, dt) {
 }
 
 // Build a view basis from a camera: forward, right and up unit vectors.
+// Up is the world up with its forward component removed (so it stays
+// perpendicular to the view), and right is up cross forward — the pair
+// that puts east on the right when the camera looks north.
 export function cameraBasis(cam) {
   const fx = cam.lx - cam.x;
   const fy = cam.ly - cam.y;
   const fz = cam.lz - cam.z;
   const fl = Math.hypot(fx, fy, fz) || 1;
   const f = [fx / fl, fy / fl, fz / fl];
-  // Right = forward x world-up (0,1,0), then true up = right x forward.
-  let r = [f[2], 0, -f[0]];
-  const rl = Math.hypot(r[0], r[1], r[2]) || 1;
-  r = [r[0] / rl, r[1] / rl, r[2] / rl];
-  const u = [
-    r[1] * f[2] - r[2] * f[1],
-    r[2] * f[0] - r[0] * f[2],
-    r[0] * f[1] - r[1] * f[0],
+  const dot = f[1]; // f . worldUp (0,1,0)
+  let u = [-f[0] * dot, 1 - f[1] * dot, -f[2] * dot];
+  const ul = Math.hypot(u[0], u[1], u[2]) || 1;
+  u = [u[0] / ul, u[1] / ul, u[2] / ul];
+  // Right is forward cross up: east on the right when the camera looks
+  // north. (Up cross forward points west — the painter was mirrored
+  // until this was fixed.)
+  const r = [
+    f[1] * u[2] - f[2] * u[1],
+    f[2] * u[0] - f[0] * u[2],
+    f[0] * u[1] - f[1] * u[0],
   ];
   return { f, r, u };
 }
@@ -58,16 +64,31 @@ export function project(cam, basis, px, py, pz, w, h) {
   return { x: w / 2 + (cx * f) / cz, y: h / 2 - (cy * f) / cz, depth: cz };
 }
 
+// Like project, but a point at or behind the camera is clamped to the
+// near plane instead of dropped: ground quads that run under the camera
+// still paint, stretched toward the viewer, instead of vanishing whole.
+export function projectClamped(cam, basis, px, py, pz, w, h) {
+  const dx = px - cam.x;
+  const dy = py - cam.y;
+  const dz = pz - cam.z;
+  const cx = dx * basis.r[0] + dy * basis.r[1] + dz * basis.r[2];
+  const cy = dx * basis.u[0] + dy * basis.u[1] + dz * basis.u[2];
+  const cz = Math.max(0.5, dx * basis.f[0] + dy * basis.f[1] + dz * basis.f[2]);
+  const f = (h / 2) / Math.tan((FOV_DEG * Math.PI) / 360);
+  return { x: w / 2 + (cx * f) / cz, y: h / 2 - (cy * f) / cz, depth: cz };
+}
+
 export function skyColorFor(clock) {
-  // clock: 0 dawn, 0.5 noon, 0.75 sunset, 1 night. Blend day/dusk/night.
+  // clock: 0 dawn, 0.5 noon, 0.75 sunset, 1 night. Blue day until the
+  // early evening, a warm dusk blend into sunset, then night.
   const day = [135, 181, 224];
   const dusk = [242, 125, 74];
   const night = [14, 12, 34];
   let a;
   let b;
   let t;
-  if (clock < 0.6) { a = day; b = dusk; t = clamp(clock / 0.6, 0, 1); }
-  else if (clock < 0.85) { a = dusk; b = night; t = clamp((clock - 0.6) / 0.25, 0, 1); }
+  if (clock < 0.72) { a = day; b = dusk; t = clamp((clock - 0.62) / 0.1, 0, 1); }
+  else if (clock < 0.85) { a = dusk; b = night; t = clamp((clock - 0.72) / 0.13, 0, 1); }
   else { a = night; b = night; t = 0; }
   return [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
 }

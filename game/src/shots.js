@@ -22,6 +22,8 @@ export function stageShot(name, sim) {
     sim.state.wanted = 5;
     sim.state.flash = 0;
     driveFor(sim, MARKERS.northHillsDrop.x, MARKERS.northHillsDrop.z, 9);
+    tidyShot(sim, 5);
+    frameHeli(sim);
     return 'play';
   }
   if (name === 'roadblock') {
@@ -32,6 +34,14 @@ export function stageShot(name, sim) {
     sim.state.wanted = 4;
     sim.state.flash = 0;
     driveFor(sim, MARKERS.northHillsDrop.x, MARKERS.northHillsDrop.z, 7);
+    tidyShot(sim, 4);
+    // The drive just passed the roadblocks the sim spawned at the start,
+    // so they are behind the car now. Clear them and let the sim spawn a
+    // fresh set ahead of the car, where the camera can see them.
+    sim.state.roadblocks = [];
+    sim.step(STEP, { move: { x: 0, z: 0 }, running: false, actions: 0, nos: false });
+    tidyShot(sim, 4);
+    frameHeli(sim);
     return 'play';
   }
   if (name === 'finale') {
@@ -46,6 +56,8 @@ export function stageShot(name, sim) {
     sim.state.wanted = 4;
     sim.state.flash = 0;
     driveFor(sim, MARKERS.northHillsDrop.x, MARKERS.northHillsDrop.z, 8);
+    tidyShot(sim, 4);
+    frameHeli(sim);
     return 'play';
   }
   if (name === 'start') {
@@ -55,11 +67,42 @@ export function stageShot(name, sim) {
   }
   // Default and 'chase': the cover. Day chase cam, four stars, police
   // behind the car on the Downtown avenues.
+  sim.state.clock = 0.6;
   stealNearestCar(sim, 20);
   sim.state.wanted = 4;
   sim.state.flash = 0;
   driveFor(sim, MARKERS.northHillsDrop.x, MARKERS.northHillsDrop.z, 8);
+  tidyShot(sim, 4);
+  frameHeli(sim);
   return 'play';
+}
+
+// After staging, the drive may have cost the player health and raised the
+// heat (a fast drive through pedestrians does that). A screenshot should
+// show the scene as staged — full health, the intended wanted level, no
+// flash — not the bruises of the drive that set it up.
+function tidyShot(sim, wanted) {
+  sim.state.player.health = sim.state.player.maxHealth;
+  sim.state.wanted = wanted;
+  sim.state.flash = 0;
+}
+
+// The helicopter flies 55 m up and just behind the player, which puts it
+// above the chase camera's frame. For a shot that must show it, move it
+// to a visible slot ahead and to the right, lower, its spotlight still
+// on the player. This is staging of the same sim state the browser shows.
+function frameHeli(sim) {
+  const p = sim.state.player;
+  const h = sim.state.heli;
+  if (!h.active) return;
+  const fx = Math.cos(p.angle);
+  const fz = Math.sin(p.angle);
+  const rx = -fz;
+  const rz = fx;
+  h.x = p.x + fx * 45 + rx * 35;
+  h.z = p.z + fz * 45 + rz * 35;
+  h.y = 22;
+  h.angle = p.angle;
 }
 
 // Drive the current chapter's first step for a few seconds, for the
