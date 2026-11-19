@@ -14,38 +14,40 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
-const here = fileURLToPath(new URL('.', import.meta.url));
-const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
-const gameDir = join(here, 'game');
-const shotsDir = join(here, 'screenshots');
+const repoRoot = fileURLToPath(new URL('.', import.meta.url));
+const outDir = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+const gameSrc = join(repoRoot, 'game');
+const shotsSrc = join(repoRoot, 'screenshots');
 
-if (!existsSync(join(gameDir, 'index.html'))) {
+if (!existsSync(join(gameSrc, 'index.html'))) {
   process.stderr.write('solano heat: game/index.html is missing next to main.ts\n');
   process.exit(2);
 }
 
-mkdirSync(out, { recursive: true });
+mkdirSync(outDir, { recursive: true });
 // When the output directory IS this repository (MAKEFUN_OUTPUT_DIR=.),
 // the game and screenshots are already in place — copying them onto
 // themselves is an error, so skip the copy and just write the dossier.
-if (resolve(out) !== resolve(here)) {
-  cpSync(gameDir, join(out, 'game'), { recursive: true });
-  mkdirSync(join(out, 'screenshots'), { recursive: true });
-  if (existsSync(shotsDir)) cpSync(shotsDir, join(out, 'screenshots'), { recursive: true });
+const inPlace = resolve(outDir) === resolve(repoRoot);
+if (!inPlace) {
+  cpSync(gameSrc, join(outDir, 'game'), { recursive: true });
+  mkdirSync(join(outDir, 'screenshots'), { recursive: true });
+  if (existsSync(shotsSrc)) cpSync(shotsSrc, join(outDir, 'screenshots'), { recursive: true });
 }
 
 // The scorer's caps, from the competition kit: at most 4 screenshots of at
 // most 256 KiB, at most 993 files and 48 MiB under game/, and a dossier text
 // cap of 160 KiB. The gate rebuilds the dossier with the same library and
 // compares the two byte for byte, so these numbers must stay as the kit has
-// them.
-const dossier = buildDossier(out, {
+// them — change nothing here without re-checking the kit's RULES.txt.
+const dossierText = buildDossier(outDir, {
   text_max_bytes: 163840,
   screenshots: { max: 4, max_bytes: 262144 },
   game_max_files: 993,
   game_max_bytes: 50331648,
   game_path_max_bytes: 1000,
 });
-writeFileSync(join(out, 'dossier.json'), dossier);
-const bytes = statSync(join(out, 'dossier.json')).size;
-process.stdout.write(`solano heat: wrote ${join(out, 'dossier.json')} (${bytes} bytes)\n`);
+const dossierPath = join(outDir, 'dossier.json');
+writeFileSync(dossierPath, dossierText);
+const dossierBytes = statSync(dossierPath).size;
+process.stdout.write(`solano heat: wrote ${dossierPath} (${dossierBytes} bytes)\n`);

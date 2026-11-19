@@ -1,8 +1,23 @@
-// Solano Heat — mission runtime. Twelve story missions over seven days, each
-// with a beacon, a timer where the story needs one, and a saw-tooth difficulty
-// curve: new systems enter gently, peak, then the next mission breathes.
+// Solano Heat — mission runtime. Twelve story jobs over seven days, each
+// with a beacon, a timer where the story needs one, and a saw-tooth curve:
+// new systems enter gently, peak, then the next job breathes.
 import { MISSIONS, missionById, missionTarget, objectiveText, daysLeft, completeMission } from './sim.js';
 import { makeBeacon } from './city.js';
+
+const SIDE_JOB_NAMES = {
+  taxi: 'Taxi Fare — drop the passenger off',
+  courier: 'Courier — deliver the package',
+  vigilante: 'Vigilante — ram the getaway car',
+  repo: 'Repo Job — bring the car back',
+};
+
+// How long the clock runs for each job shape; 0 means no timer at all.
+function jobTimeLimit(type) {
+  if (type === 'timed') return 75;
+  if (type === 'escape') return 120;
+  if (type === 'finale') return 240;
+  return 0;
+}
 
 export class MissionRunner {
   constructor(scene, state) {
@@ -22,25 +37,20 @@ export class MissionRunner {
     const beacon = makeBeacon(m.id === 12 ? 0xff4444 : 0xf5c542);
     beacon.position.set(target.x, 0, target.z);
     this.scene.add(beacon);
-    const timerMax = m.type === 'timed' ? 75 : m.type === 'escape' ? 120 : m.type === 'finale' ? 240 : 0;
+    const timerMax = jobTimeLimit(m.type);
     this.active = { mission: m, target, phase: 'go', timer: timerMax, timerMax, beacon, noDamage: true, stunts: 0 };
     this.banner = `DAY ${m.day} — ${m.name.toUpperCase()}: ${m.blurb}`;
     return true;
   }
   startSideJob(kind) {
-    const names = {
-      taxi: 'Taxi Fare — drop the passenger off',
-      courier: 'Courier — deliver the package',
-      vigilante: 'Vigilante — ram the getaway car',
-      repo: 'Repo Job — bring the car back',
-    };
+    const label = SIDE_JOB_NAMES[kind] || 'Side job';
     const target = { x: (Math.random() * 2 - 1) * 480, z: (Math.random() * 2 - 1) * 480 };
     this.clearBeacon();
     const beacon = makeBeacon(0x4fc3f7);
     beacon.position.set(target.x, 0, target.z);
     this.scene.add(beacon);
-    this.sideJob = { kind, target, beacon, label: names[kind] || 'Side job' };
-    this.banner = 'SIDE JOB: ' + (names[kind] || 'Side job');
+    this.sideJob = { kind, target, beacon, label };
+    this.banner = 'SIDE JOB: ' + label;
     return this.sideJob;
   }
   clearBeacon() {
@@ -54,7 +64,7 @@ export class MissionRunner {
     this.active = null;
     this.sideJob = null;
   }
-  // Returns { done, failed, reason, gain } when the mission resolves.
+  // Returns { done, failed, reason, gain } when the job resolves.
   update(dt, player, wanted, time) {
     const out = { done: false, failed: false };
     if (this.active) {
@@ -63,18 +73,21 @@ export class MissionRunner {
         a.timer -= dt;
         if (a.timer <= 0) {
           this.abort();
-          out.failed = true; out.reason = 'Time ran out.';
+          out.failed = true;
+          out.reason = 'Time ran out.';
           return out;
         }
       }
-      const dx = player.x - a.target.x, dz = player.z - a.target.z;
+      const dx = player.x - a.target.x;
+      const dz = player.z - a.target.z;
       const dist = Math.hypot(dx, dz);
       a.dist = dist;
       if (a.mission.type === 'stealth') {
-        // Failing the stealth mission means being spotted up close at speed.
+        // Failing the stealth job means being spotted up close at speed.
         if (wanted >= 3 && dist < 200 && Math.abs(player.speed) > 5) {
           this.abort();
-          out.failed = true; out.reason = 'Spotted. The streets saw you.';
+          out.failed = true;
+          out.reason = 'Spotted. The streets saw you.';
           return out;
         }
       }
@@ -82,9 +95,10 @@ export class MissionRunner {
         a.phase = 'fight';
         this.banner = 'Take down the rival crew — click to shoot, then get out.';
       }
-      if ((a.mission.type === 'combat' && a.phase === 'fight') || a.mission.type !== 'combat') {
+      const inCombat = a.mission.type === 'combat' && a.phase === 'fight';
+      if (inCombat || a.mission.type !== 'combat') {
         if (dist < 14) {
-          if (a.mission.type === 'combat' && a.phase === 'fight' && !a.fightDone) {
+          if (inCombat && !a.fightDone) {
             a.fightDone = true;
             a.target = { x: a.target.x + 120, z: a.target.z + 80 };
             a.beacon.position.set(a.target.x, 0, a.target.z);
@@ -98,7 +112,9 @@ export class MissionRunner {
           });
           this.clearBeacon();
           this.active = null;
-          out.done = true; out.gain = gain; out.mission = a.mission;
+          out.done = true;
+          out.gain = gain;
+          out.mission = a.mission;
           return out;
         }
       }

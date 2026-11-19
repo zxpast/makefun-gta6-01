@@ -1,7 +1,10 @@
-// Solano Heat — the respect economy. Respect is the persistent meta currency:
-// missions and stunts earn it, it never resets, and it buys permanent garage
-// upgrades and weapons. Shops and safehouses are places in the city, not menus.
+// Solano Heat — the respect economy. Respect is the persistent meta
+// currency: jobs and stunts earn it, it never resets, and it buys permanent
+// garage upgrades and weapons. Shops and safehouses are places in the city,
+// not menus.
 import { SHOPS, SAFEHOUSES, WEAPONS, AMMO_PRICE, CLINIC_HEAL_PRICE, buyUpgrade, buyWeapon, upgradeCost, UPGRADE_NAMES } from './sim.js';
+
+const SENSE_RANGE = 16;
 
 export class Economy {
   constructor(state) {
@@ -11,18 +14,13 @@ export class Economy {
     this.shopOpen = false;
     this.message = '';
   }
-  // Called every frame with the player's position; returns the nearest place.
+  // The shop only ever sells one thing at a time: find the closest place
+  // within reach, shops first, then safehouses.
   sense(px, pz) {
-    this.nearShop = null;
-    this.nearHouse = null;
-    for (const s of SHOPS) {
-      if (Math.hypot(px - s.x, pz - s.z) < 16) { this.nearShop = s; break; }
-    }
-    if (!this.nearShop) {
-      for (const h of SAFEHOUSES) {
-        if (Math.hypot(px - h.x, pz - h.z) < 16) { this.nearHouse = h; break; }
-      }
-    }
+    this.nearShop = SHOPS.find(s => Math.hypot(px - s.x, pz - s.z) < SENSE_RANGE) || null;
+    this.nearHouse = this.nearShop
+      ? null
+      : SAFEHOUSES.find(h => Math.hypot(px - h.x, pz - h.z) < SENSE_RANGE) || null;
     return { shop: this.nearShop, house: this.nearHouse };
   }
   shopLines() {
@@ -40,7 +38,10 @@ export class Economy {
       lines.push({
         label: `Ammo pack — $${AMMO_PRICE}`,
         action: () => {
-          if (st.cash < AMMO_PRICE) { this.message = 'Not enough cash.'; return; }
+          if (st.cash < AMMO_PRICE) {
+            this.message = 'Not enough cash.';
+            return;
+          }
           st.cash -= AMMO_PRICE;
           st.ammo[st.activeWeapon] = (st.ammo[st.activeWeapon] || 0) + 30;
           this.message = '+30 ammo.';
@@ -64,7 +65,10 @@ export class Economy {
     return [{
       label: `Full repair + heal — $${CLINIC_HEAL_PRICE}`,
       action: () => {
-        if (st.cash < CLINIC_HEAL_PRICE) { this.message = 'Not enough cash.'; return; }
+        if (st.cash < CLINIC_HEAL_PRICE) {
+          this.message = 'Not enough cash.';
+          return;
+        }
         st.cash -= CLINIC_HEAL_PRICE;
         st.health = 100;
         this.message = 'Patched up. Health restored.';

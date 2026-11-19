@@ -1,54 +1,68 @@
-// Solano Heat — pure logic core. No DOM, no three.js, no I/O: every rule the
-// game and its automated tests share lives here, so the same numbers drive the
-// missions, the wanted system, the respect economy and the save file.
+// Solano Heat — the shared rulebook. This module has no DOM, no WebGL and
+// no file access: it holds every number and rule that the 3D game and the
+// automated test suite both run on, so the two can never drift apart. The
+// city grid, the story, the wanted ladder, the respect economy and the save
+// format all live here and nowhere else.
+
 export function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function () {
-    a |= 0; a = (a + 0x6D2B79F5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  let state = seed >>> 0;
+  return function next() {
+    state |= 0;
+    state = (state + 0x6D2B79F5) | 0;
+    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
   };
 }
 
-export function hashStr(s) {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
-  return h >>> 0;
+export function hashStr(text) {
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
 }
 
-// Solano Bay: a 4x4 grid of named districts, 300 units a cell, city 1200 wide.
+// The city is a four-by-four board of districts, each cell 300 units wide,
+// so the whole map spans 1200 units from -600 to +600 on both axes.
 export const CITY_HALF = 600;
 export const CELL = 300;
 export const DISTRICTS = [
-  { name: 'Port Solano', gx: 0, gz: 0, tint: 0x3f6d8e, flavor: 'docks and cranes' },
-  { name: 'Old Cannery', gx: 1, gz: 0, tint: 0x7a6a55, flavor: 'brick warehouses' },
-  { name: 'Marina Bay', gx: 2, gz: 0, tint: 0x2e8b8b, flavor: 'yachts and neon' },
-  { name: 'North Point', gx: 3, gz: 0, tint: 0x8e6a3f, flavor: 'lighthouse hill' },
-  { name: 'La Plazoleta', gx: 0, gz: 1, tint: 0xd9a441, flavor: 'market square' },
-  { name: 'Calle Verde', gx: 1, gz: 1, tint: 0x4f8f5a, flavor: 'palm boulevard' },
-  { name: 'Downtown', gx: 2, gz: 1, tint: 0x5a6b8a, flavor: 'glass towers' },
-  { name: 'The Strip', gx: 3, gz: 1, tint: 0xc23b6e, flavor: 'casinos and clubs' },
-  { name: 'Barrio Alto', gx: 0, gz: 2, tint: 0xb0703a, flavor: 'painted houses' },
-  { name: 'Junction', gx: 1, gz: 2, tint: 0x6b6b6b, flavor: 'rail yards' },
-  { name: 'Civic Center', gx: 2, gz: 2, tint: 0x8a8a9a, flavor: 'city hall' },
-  { name: 'Sunset Keys', gx: 3, gz: 2, tint: 0xe07a5f, flavor: 'beachfront' },
-  { name: 'Little Havana', gx: 0, gz: 3, tint: 0x3fb27a, flavor: 'cafes and dominoes' },
-  { name: 'Airport Road', gx: 1, gz: 3, tint: 0x9a9a7a, flavor: 'hangars' },
-  { name: 'The Palms', gx: 2, gz: 3, tint: 0x2f9e6e, flavor: 'resort hotels' },
-  { name: 'South Docks', gx: 3, gz: 3, tint: 0x4a5a7a, flavor: 'container port' },
+  { name: 'Port Solano', flavor: 'docks and cranes', gx: 0, gz: 0, tint: 0x3f6d8e },
+  { name: 'Old Cannery', flavor: 'brick warehouses', gx: 1, gz: 0, tint: 0x7a6a55 },
+  { name: 'Marina Bay', flavor: 'yachts and neon', gx: 2, gz: 0, tint: 0x2e8b8b },
+  { name: 'North Point', flavor: 'lighthouse hill', gx: 3, gz: 0, tint: 0x8e6a3f },
+  { name: 'La Plazoleta', flavor: 'market square', gx: 0, gz: 1, tint: 0xd9a441 },
+  { name: 'Calle Verde', flavor: 'palm boulevard', gx: 1, gz: 1, tint: 0x4f8f5a },
+  { name: 'Downtown', flavor: 'glass towers', gx: 2, gz: 1, tint: 0x5a6b8a },
+  { name: 'The Strip', flavor: 'casinos and clubs', gx: 3, gz: 1, tint: 0xc23b6e },
+  { name: 'Barrio Alto', flavor: 'painted houses', gx: 0, gz: 2, tint: 0xb0703a },
+  { name: 'Junction', flavor: 'rail yards', gx: 1, gz: 2, tint: 0x6b6b6b },
+  { name: 'Civic Center', flavor: 'city hall', gx: 2, gz: 2, tint: 0x8a8a9a },
+  { name: 'Sunset Keys', flavor: 'beachfront', gx: 3, gz: 2, tint: 0xe07a5f },
+  { name: 'Little Havana', flavor: 'cafes and dominoes', gx: 0, gz: 3, tint: 0x3fb27a },
+  { name: 'Airport Road', flavor: 'hangars', gx: 1, gz: 3, tint: 0x9a9a7a },
+  { name: 'The Palms', flavor: 'resort hotels', gx: 2, gz: 3, tint: 0x2f9e6e },
+  { name: 'South Docks', flavor: 'container port', gx: 3, gz: 3, tint: 0x4a5a7a },
 ];
 
-export function districtAt(x, z) {
-  const gx = Math.floor((x + CITY_HALF) / CELL);
-  const gz = Math.floor((z + CITY_HALF) / CELL);
-  if (gx < 0 || gx > 3 || gz < 0 || gz > 3) return null;
-  return DISTRICTS[gz * 4 + gx];
+function gridCell(x, z) {
+  const col = Math.floor((x + CITY_HALF) / CELL);
+  const row = Math.floor((z + CITY_HALF) / CELL);
+  if (col < 0 || col > 3 || row < 0 || row > 3) return null;
+  return [col, row];
 }
 
-// Twelve story missions over seven days. Difficulty is a saw-tooth: each new
-// system enters in a low-stakes mission, peaks, then the next mission drops
-// back down before the next climb. Peaks at 4, 8 and 12; valleys at 5 and 9.
+export function districtAt(x, z) {
+  const cell = gridCell(x, z);
+  if (!cell) return null;
+  return DISTRICTS[cell[1] * 4 + cell[0]];
+}
+
+// Twelve story jobs across seven days. The difficulty is a saw-tooth: a new
+// system shows up in a gentle job, climbs to a peak, then the next job eases
+// off before the following climb. Peaks at 4, 8 and 12; valleys at 5 and 9.
 export const MISSIONS = [
   { id: 1, day: 1, name: 'First Ride', type: 'drive', difficulty: 2, wanted: 0, cash: 300, respect: 20, blurb: 'Maya needs a driver. Take the sedan across Downtown and do not scratch it.' },
   { id: 2, day: 1, name: 'Courier Run', type: 'timed', difficulty: 3, wanted: 0, cash: 450, respect: 25, blurb: 'Three drops, one clock. The Strip to the Marina before the timer dies.' },
@@ -73,6 +87,8 @@ export function nextMissionId(completed) {
   return null;
 }
 
+// Gear for sale: three guns and four garage upgrades. Upgrade prices climb
+// steeply per level, so a fully tuned car is a late-game goal, not a day-one buy.
 export const WEAPONS = [
   { id: 'pistol', name: 'Pistol', damage: 25, price: 250, fireMs: 350 },
   { id: 'smg', name: 'SMG', damage: 14, price: 900, fireMs: 90 },
@@ -84,14 +100,14 @@ export const UPGRADE_KINDS = ['engine', 'armor', 'nos', 'tires'];
 export const UPGRADE_NAMES = { engine: 'Engine', armor: 'Armor', nos: 'NOS Kit', tires: 'Tires' };
 export const UPGRADE_BASE = { engine: 600, armor: 500, nos: 700, tires: 400 };
 export function upgradeCost(kind, level) {
-  // level is the level being bought (1..3); cost climbs steeply.
+  // `level` is the level being bought, 1 to 3; the price climbs steeply.
   return Math.round(UPGRADE_BASE[kind] * Math.pow(1.8, level - 1));
 }
 export function upgradeEffect(kind, level) {
   if (kind === 'engine') return 1 + 0.12 * level;
   if (kind === 'armor') return 1 + 0.5 * level;
   if (kind === 'nos') return 1 + 0.6 * level;
-  return 1 + 0.15 * level; // tires: grip
+  return 1 + 0.15 * level; // tires buy grip
 }
 
 export const SHOPS = [
@@ -115,7 +131,7 @@ export function createState() {
   };
 }
 
-// Wanted: crimes push stars up, hiding and time pull them down.
+// The wanted ladder: crimes push stars up, hiding and time pull them down.
 export const CRIME_HEAT = { bump: 1, hitCar: 1, hitPed: 2, stealCar: 1, shoot: 1, speedTrap: 0 };
 export function wantedAfterCrime(wanted, crime) {
   return Math.max(0, Math.min(5, wanted + (CRIME_HEAT[crime] || 0)));
@@ -132,17 +148,18 @@ export function policeCount(wanted) {
 export function heliActive(wanted) { return wanted >= 4; }
 export function roadblockActive(wanted) { return wanted >= 4; }
 
+// Rewards: a clean, fast run pays more than a sloppy one.
 export function respectForMission(m, opts = {}) {
-  let r = m.respect;
-  if (opts.timeBonus) r += 10;
-  if (opts.noDamage) r += 15;
-  if (opts.stunts) r += Math.min(20, opts.stunts * 2);
-  return r;
+  let total = m.respect;
+  if (opts.timeBonus) total += 10;
+  if (opts.noDamage) total += 15;
+  if (opts.stunts) total += Math.min(20, opts.stunts * 2);
+  return total;
 }
 export function cashForMission(m, opts = {}) {
-  let c = m.cash;
-  if (opts.timeBonus) c += Math.round(m.cash * 0.2);
-  return c;
+  let total = m.cash;
+  if (opts.timeBonus) total += Math.round(m.cash * 0.2);
+  return total;
 }
 export function stuntRespect(kind) {
   return { nearMiss: 3, drift: 2, airtime: 5, takedown: 8 }[kind] || 0;
@@ -183,18 +200,18 @@ export function serializeSave(state) {
 }
 export function parseSave(text) {
   try {
-    const d = JSON.parse(text);
-    if (!d || d.version !== 1 || typeof d.cash !== 'number' || !Array.isArray(d.completed)) return null;
-    const s = createState();
-    Object.assign(s, d);
-    return s;
+    const data = JSON.parse(text);
+    if (!data || data.version !== 1 || typeof data.cash !== 'number' || !Array.isArray(data.completed)) return null;
+    const fresh = createState();
+    Object.assign(fresh, data);
+    return fresh;
   } catch { return null; }
 }
 
-// Deterministic mission targets from the mission id alone, so the sim and the
-// 3D world always agree on where a mission sends the player. Targets snap to
-// road intersections (multiples of 100), so every beacon is reachable by road
-// and no mission asks the player to drive through a building.
+// Mission destinations are fixed by the mission id alone, so the logic core
+// and the 3D world always agree on where a job sends the player. Destinations
+// snap to road crossings (multiples of 100), so every beacon sits on a road
+// and no job asks the player to drive through a building.
 export function missionTarget(id) {
   const rnd = mulberry32(hashStr('solano-target-' + id));
   const x = Math.round((rnd() * 2 - 1) * 4.8) * 100 || 0;

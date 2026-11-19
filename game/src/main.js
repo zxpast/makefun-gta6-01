@@ -1,6 +1,6 @@
-// Solano Heat — boot, game loop and state machine. Title, mission select,
-// free roam, missions, shops, safehouses, bust and wreck flows, chase camera,
-// on-foot play and carjacking, drive-by shooting, and a demo driver.
+// Solano Heat — boot, game loop and state machine. Title, job board, free
+// roam, jobs, shops, safehouses, bust and wreck flows, chase camera, on-foot
+// play and carjacking, drive-by shooting, and a demo driver.
 import * as THREE from 'three';
 import { createState, districtAt, missionById, wantedAfterCrime, stuntRespect, daysLeft, MISSIONS, SHOPS, SAFEHOUSES } from './sim.js';
 import { buildCity, setMood } from './city.js';
@@ -15,12 +15,22 @@ import { Effects } from './effects.js';
 import { loadSave, writeSave } from './save.js';
 
 const $ = (id) => document.getElementById(id);
-const MODS = (s) => ({
-  engine: 1 + 0.12 * (s.upgrades.engine || 0),
-  armor: 1 + 0.5 * (s.upgrades.armor || 0),
-  nos: 1 + 0.6 * (s.upgrades.nos || 0),
-  tires: 1 + 0.15 * (s.upgrades.tires || 0),
-});
+
+// Garage upgrades as driving multipliers, from the saved upgrade levels.
+function modifiersFor(s) {
+  return {
+    engine: 1 + 0.12 * (s.upgrades.engine || 0),
+    armor: 1 + 0.5 * (s.upgrades.armor || 0),
+    nos: 1 + 0.6 * (s.upgrades.nos || 0),
+    tires: 1 + 0.15 * (s.upgrades.tires || 0),
+  };
+}
+
+function wrapAngle(a) {
+  while (a > Math.PI) a -= Math.PI * 2;
+  while (a < -Math.PI) a += Math.PI * 2;
+  return a;
+}
 
 class Game {
   constructor() {
@@ -40,7 +50,7 @@ class Game {
     this.economy = new Economy(this.state);
     this.clock = new THREE.Clock();
     this.time = 0;
-    this.shakeX = 0; this.shakeY = 0;
+    this.acc = 0;
     this.nearMissCd = 0;
     this.driftRespectCd = 0;
     this.saveCd = 0;
@@ -74,8 +84,10 @@ class Game {
     this.sun.position.set(400, 500, 200);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(1024, 1024);
-    this.sun.shadow.camera.left = -260; this.sun.shadow.camera.right = 260;
-    this.sun.shadow.camera.top = 260; this.sun.shadow.camera.bottom = -260;
+    this.sun.shadow.camera.left = -260;
+    this.sun.shadow.camera.right = 260;
+    this.sun.shadow.camera.top = 260;
+    this.sun.shadow.camera.bottom = -260;
     this.sun.shadow.camera.far = 1600;
     this.scene.add(this.sun);
     this.hemi = new THREE.HemisphereLight(0xffe0b0, 0x40342a, 0.9);
@@ -109,7 +121,7 @@ class Game {
     this.avatar = g;
   }
   bindMouse() {
-    $('game').addEventListener('click', (e) => {
+    $('game').addEventListener('click', () => {
       if (this.mode !== 'play') return;
       this.shoot();
     });
@@ -120,15 +132,22 @@ class Game {
   }
   shoot() {
     const w = this.state.activeWeapon;
-    if ((this.state.ammo[w] || 0) <= 0) { this.hud.showToast('No ammo — visit Ironworks Arms.'); return; }
+    if ((this.state.ammo[w] || 0) <= 0) {
+      this.hud.showToast('No ammo — visit Ironworks Arms.');
+      return;
+    }
     this.state.ammo[w]--;
     this.radio.shot();
     const range = w === 'shotgun' ? 26 : 55;
-    let best = null, bestD = range;
+    let best = null;
+    let bestD = range;
     for (const c of this.police.cars) {
       if (!c.active) continue;
       const d = Math.hypot(c.x - this.car.x, c.z - this.car.z);
-      if (d < bestD) { bestD = d; best = c; }
+      if (d < bestD) {
+        bestD = d;
+        best = c;
+      }
     }
     if (best) {
       best.speed = Math.max(6, best.speed - 12);
@@ -170,11 +189,19 @@ class Game {
   showShop() {
     this.mode = 'shop';
     const s = this.economy.nearShop;
-    if (!s) { this.mode = 'play'; this.hud.hideMenu(); return; }
+    if (!s) {
+      this.mode = 'play';
+      this.hud.hideMenu();
+      return;
+    }
     const lines = this.economy.shopLines().map((l, i) =>
       `<div class="mrow ${i === this.shopSel ? 'sel' : ''}" data-act="buy" data-arg="${i}"><b>${l.label}</b></div>`).join('');
     this.hud.showMenu(`<h1>${s.name.toUpperCase()}</h1><p class="tag">${s.district} — Cash $${this.state.cash} · Respect ${this.state.respect}</p>${lines}
       <p class="keys">${this.economy.message || 'Pick an item, or press E to leave.'}</p><button data-act="leave">LEAVE</button>`);
+  }
+  showPause() {
+    this.mode = 'pause';
+    this.hud.showMenu(`<h1>PAUSED</h1><p class="tag">Solano Bay waits.</p><button data-act="free">RESUME</button><button data-act="title">TITLE SCREEN</button>`);
   }
   showOver(title, sub) {
     this.mode = 'over';
@@ -183,17 +210,47 @@ class Game {
       <button data-act="retry">BACK ON THE STREET</button><button data-act="title">TITLE SCREEN</button>`);
   }
   menuClick(act, arg) {
-    if (act === 'start') { this.hud.hideMenu(); this.mode = 'play'; this.startNext(); }
-    else if (act === 'free') { this.hud.hideMenu(); this.mode = 'play'; }
-    else if (act === 'back') this.showTitle();
-    else if (act === 'title') this.showTitle();
-    else if (act === 'reset') { this.state = createState(); this.economy.state = this.state; this.runner.state = this.state; this.showTitle(); }
-    else if (act === 'pick') { const id = +arg; if (!this.state.completed.includes(id)) { this.hud.hideMenu(); this.mode = 'play'; this.startMission(id); } }
-    else if (act === 'buy') { const lines = this.economy.shopLines(); if (lines[+arg]) { lines[+arg].action(); this.showShop(); } }
-    else if (act === 'leave') { this.hud.hideMenu(); this.mode = 'play'; }
-    else if (act === 'retry') {
-      this.hud.hideMenu(); this.mode = 'play';
-      this.wanted = 0; this.car.x = 400; this.car.z = -400; this.car.heading = Math.PI; this.car.speed = 0; this.car.repair();
+    if (act === 'start') {
+      this.hud.hideMenu();
+      this.mode = 'play';
+      this.startNext();
+    } else if (act === 'free') {
+      this.hud.hideMenu();
+      this.mode = 'play';
+    } else if (act === 'back') {
+      this.showTitle();
+    } else if (act === 'title') {
+      this.showTitle();
+    } else if (act === 'reset') {
+      this.state = createState();
+      this.economy.state = this.state;
+      this.runner.state = this.state;
+      this.showTitle();
+    } else if (act === 'pick') {
+      const id = +arg;
+      if (!this.state.completed.includes(id)) {
+        this.hud.hideMenu();
+        this.mode = 'play';
+        this.startMission(id);
+      }
+    } else if (act === 'buy') {
+      const lines = this.economy.shopLines();
+      if (lines[+arg]) {
+        lines[+arg].action();
+        this.showShop();
+      }
+    } else if (act === 'leave') {
+      this.hud.hideMenu();
+      this.mode = 'play';
+    } else if (act === 'retry') {
+      this.hud.hideMenu();
+      this.mode = 'play';
+      this.wanted = 0;
+      this.car.x = 400;
+      this.car.z = -400;
+      this.car.heading = Math.PI;
+      this.car.speed = 0;
+      this.car.repair();
     }
   }
   startNext() {
@@ -210,21 +267,22 @@ class Game {
     const t = this.runner.active.target;
     if (Math.abs(t.x - this.car.x) > 10) this.car.heading = t.x >= this.car.x ? Math.PI / 2 : -Math.PI / 2;
     else this.car.heading = t.z >= this.car.z ? 0 : Math.PI;
-    setMood(this.scene, this.sun, this.hemi, m.type === 'timed' && id === 6 ? 'night' : id === 8 || id === 12 ? 'dusk' : 'day');
+    const mood = m.type === 'timed' && id === 6 ? 'night' : id === 8 || id === 12 ? 'dusk' : 'day';
+    setMood(this.scene, this.sun, this.hemi, mood);
     this.radio.chime();
   }
   // ---- per-frame ----
   // Fixed-step simulation: the game advances in 1/60s steps no matter how
-  // fast the screen renders, so slow software rendering (or a background tab)
-  // slows the picture, never the game. Up to 40 steps a frame keeps a stalled
-  // renderer at real time; any further backlog is dropped, not repaid.
+  // fast the screen renders, so slow software rendering (or a background
+  // tab) slows the picture, never the game. Up to 180 steps a frame keeps a
+  // stalled renderer at real time; any further backlog is dropped.
   loop() {
     requestAnimationFrame(this.loop);
     // The raw frame delta is capped at 2.5s: long enough for a slow software
     // renderer (half a frame a second still catches up), short enough that a
     // tab switch does not queue minutes of simulation.
     const rawDt = Math.min(2.5, this.clock.getDelta());
-    this.acc = (this.acc || 0) + rawDt;
+    this.acc += rawDt;
     let steps = 0;
     while (this.acc >= 1 / 60 && steps < 180) {
       this.step(1 / 60);
@@ -247,12 +305,19 @@ class Game {
     const speedKmh = this.onFoot ? 0 : Math.abs(this.car.speed) * 3.2;
     const d = districtAt(px, pz);
     window.SOLANO = {
-      mode: this.mode, wanted: this.wanted,
+      mode: this.mode,
+      wanted: this.wanted,
       mission: this.runner.current() ? this.runner.current().id : 0,
       select: this.mode === 'select' ? MISSIONS[this.selectIdx].id : 0,
-      speed: Math.round(speedKmh), px: Math.round(px), pz: Math.round(pz),
-      heli: !!this.police.heliMesh, district: d ? d.name : '', cash: this.state.cash, respect: this.state.respect,
-      errors: this.errors.length, banner: this.runner.banner,
+      speed: Math.round(speedKmh),
+      px: Math.round(px),
+      pz: Math.round(pz),
+      heli: !!this.police.heliMesh,
+      district: d ? d.name : '',
+      cash: this.state.cash,
+      respect: this.state.respect,
+      errors: this.errors.length,
+      banner: this.runner.banner,
       target: this.runner.active ? { x: Math.round(this.runner.active.target.x), z: Math.round(this.runner.active.target.z) } : null,
       heading: Math.round(heading * 100) / 100,
       heliPos: this.police.heliMesh ? { x: Math.round(this.police.heliMesh.position.x), y: Math.round(this.police.heliMesh.position.y), z: Math.round(this.police.heliMesh.position.z) } : null,
@@ -271,10 +336,18 @@ class Game {
     const a = this.time * 0.05;
     this.camera.position.set(Math.sin(a) * 320, 120, Math.cos(a) * 320);
     this.camera.lookAt(0, 0, 0);
-    if (this.mode === 'title' && this.input.hit('m')) { this.showSelect(); return; }
+    if (this.mode === 'title' && this.input.hit('m')) {
+      this.showSelect();
+      return;
+    }
     if (this.input.hit('Enter')) {
-      if (this.mode === 'title') { this.hud.hideMenu(); this.mode = 'play'; this.startNext(); }
-      else if (this.mode === 'select') this.menuClick('pick', String(MISSIONS[this.selectIdx].id));
+      if (this.mode === 'title') {
+        this.hud.hideMenu();
+        this.mode = 'play';
+        this.startNext();
+      } else if (this.mode === 'select') {
+        this.menuClick('pick', String(MISSIONS[this.selectIdx].id));
+      }
     }
     if (this.mode === 'select') {
       if (this.input.hit('ArrowUp', 'w')) this.selectIdx = (this.selectIdx + 11) % 12;
@@ -285,10 +358,16 @@ class Game {
   }
   updatePlay(dt) {
     const st = this.state;
-    const mods = MODS(st);
+    const mods = modifiersFor(st);
     // Global keys.
-    if (this.input.hit('Escape')) { this.mode = 'pause'; this.hud.showMenu(`<h1>PAUSED</h1><p class="tag">Solano Bay waits.</p><button data-act="free">RESUME</button><button data-act="title">TITLE SCREEN</button>`); return; }
-    if (this.input.hit('m')) { this.showSelect(); return; }
+    if (this.input.hit('Escape')) {
+      this.showPause();
+      return;
+    }
+    if (this.input.hit('m')) {
+      this.showSelect();
+      return;
+    }
     if (this.input.hit('q')) this.hud.showToast(this.radio.nextStation());
     if (this.input.hit('r')) this.hud.showToast(this.radio.toggle() ? 'Radio on: ' + this.radio.name() : 'Radio off');
     if (this.input.hit('1')) st.activeWeapon = 'pistol';
@@ -297,7 +376,10 @@ class Game {
     // Autopilot demo driver: steers toward the mission beacon.
     if (this.auto) this.autoDrive(dt);
     // Movement.
-    let px, pz, heading, speedKmh;
+    let px;
+    let pz;
+    let heading;
+    let speedKmh;
     if (this.onFoot) {
       const fwd = this.input.axis(['s', 'ArrowDown'], ['w', 'ArrowUp']);
       const steer = this.input.axis(['a', 'ArrowLeft'], ['d', 'ArrowRight']);
@@ -309,17 +391,25 @@ class Game {
       this.foot.z = Math.max(-590, Math.min(590, this.foot.z));
       this.avatar.position.set(this.foot.x, 0, this.foot.z);
       this.avatar.rotation.y = this.foot.heading;
-      px = this.foot.x; pz = this.foot.z; heading = this.foot.heading; speedKmh = Math.abs(sp) * 3.2;
+      px = this.foot.x;
+      pz = this.foot.z;
+      heading = this.foot.heading;
+      speedKmh = Math.abs(sp) * 3.2;
       if (this.input.hit('f')) this.enterCar();
       if (this.input.hit('e')) this.trySteal();
     } else {
       const res = this.car.update(dt, this.autoInput || this.input, mods);
       speedKmh = res.speedKmh;
-      px = this.car.x; pz = this.car.z; heading = this.car.heading;
+      px = this.car.x;
+      pz = this.car.z;
+      heading = this.car.heading;
       if (this.input.hit('f')) this.exitCar();
       if (this.car.drifting) {
         this.driftRespectCd -= dt;
-        if (this.driftRespectCd <= 0) { st.respect += stuntRespect('drift'); this.driftRespectCd = 1.2; }
+        if (this.driftRespectCd <= 0) {
+          st.respect += stuntRespect('drift');
+          this.driftRespectCd = 1.2;
+        }
       }
       this.collideBuildings();
       this.collideTraffic();
@@ -329,12 +419,15 @@ class Game {
     // Camera: chase cam with a little height so the helicopter stays in frame.
     const camDist = this.onFoot ? 9 : 12.5;
     const camH = this.onFoot ? 4 : 5.2;
-    const bx = px - Math.sin(heading) * camDist, bz = pz - Math.cos(heading) * camDist;
+    const bx = px - Math.sin(heading) * camDist;
+    const bz = pz - Math.cos(heading) * camDist;
     this.camera.position.lerp(new THREE.Vector3(bx, camH, bz), Math.min(1, dt * 5));
-    const lx = px + Math.sin(heading) * 10, lz = pz + Math.cos(heading) * 10;
+    const lx = px + Math.sin(heading) * 10;
+    const lz = pz + Math.cos(heading) * 10;
     this.camera.lookAt(lx, 3.0, lz);
     const [sx, sy] = this.effects.shakeOffset();
-    this.camera.position.x += sx * 0.4; this.camera.position.y += sy * 0.4;
+    this.camera.position.x += sx * 0.4;
+    this.camera.position.y += sy * 0.4;
     // Police, missions, economy.
     const pev = this.police.update(dt, { x: px, z: pz, heading, speed: this.onFoot ? 0 : this.car.speed }, this.wanted, this.time);
     if (pev.busted) {
@@ -357,7 +450,11 @@ class Game {
     const sense = this.economy.sense(px, pz);
     if (this.input.hit('e')) {
       if (sense.shop) this.showShop();
-      else if (sense.house) { this.economy.useSafehouse(this.car); writeSave(st); this.hud.showToast(this.economy.message); }
+      else if (sense.house) {
+        this.economy.useSafehouse(this.car);
+        writeSave(st);
+        this.hud.showToast(this.economy.message);
+      }
     }
     if (this.car.damage >= 100) {
       st.cash = Math.round(st.cash * 0.9);
@@ -369,30 +466,41 @@ class Game {
     this.radio.update(dt, this.onFoot ? 0 : this.car.speed, this.wanted);
     this.effects.update(dt);
     this.saveCd -= dt;
-    if (this.saveCd <= 0) { writeSave(st); this.saveCd = 10; }
+    if (this.saveCd <= 0) {
+      writeSave(st);
+      this.saveCd = 10;
+    }
     // HUD.
     const d = districtAt(px, pz);
     this.hud.update({
-      wanted: this.wanted, cash: st.cash, respect: st.respect,
-      rank: this.economy.respectBar(), district: d ? d.name : 'Solano Bay',
-      objective: this.runner.objectiveLine(), speedKmh,
-      nos: this.onFoot ? 0 : this.car.nos, damage: this.onFoot ? 0 : this.car.damage,
+      wanted: this.wanted,
+      cash: st.cash,
+      respect: st.respect,
+      rank: this.economy.respectBar(),
+      district: d ? d.name : 'Solano Bay',
+      objective: this.runner.objectiveLine(),
+      speedKmh,
+      nos: this.onFoot ? 0 : this.car.nos,
+      damage: this.onFoot ? 0 : this.car.damage,
       radio: this.radio.enabled ? this.radio.name() : 'Radio off (R)',
       banner: this.runner.banner,
       dayline: this.runner.current() ? `DAY ${this.runner.current().day} — ${daysLeft(this.runner.current().id)} DAYS TO THE NIGHT JOB` : 'SOLANO BAY — 7 DAYS TO THE NIGHT JOB',
       prompt: sense.shop ? 'Press E — ' + sense.shop.name : sense.house ? 'Press E — ' + sense.house.name + ' (save + heal)' : this.onFoot ? 'Press E near a car to steal it' : '',
-      px, pz, heading,
+      px,
+      pz,
+      heading,
       target: this.runner.active ? this.runner.active.target : this.runner.sideJob ? this.runner.sideJob.target : null,
-      shops: SHOPS, houses: SAFEHOUSES,
+      shops: SHOPS,
+      houses: SAFEHOUSES,
       police: this.police.cars.filter(c => c.active).map(c => ({ x: c.x, z: c.z })),
     });
   }
   autoDrive(dt) {
-    // Demo driver: pure pursuit along the road grid to the beacon. Waypoints
-    // run intersection to intersection, and the car always steers at a point
-    // 25 units ahead on the route, so it stays on the road instead of
-    // cutting corners through buildings. With no mission active it idles:
-    // the demo driver only drives jobs, it never joyrides.
+    // Demo driver: pure pursuit along the road grid to the beacon.
+    // Waypoints run intersection to intersection, and the car always steers
+    // at a point 25 units ahead on the route, so it stays on the road
+    // instead of cutting corners through buildings. With no mission active
+    // it idles: the demo driver only drives jobs, it never joyrides.
     if (!this.runner.active) {
       this.autoInput = { down: () => false, hit: () => false, axis: () => 0 };
       return;
@@ -403,18 +511,21 @@ class Game {
       this.autoTarget = key;
       const rx = Math.round(this.car.x / 100) * 100;
       const rz = Math.round(this.car.z / 100) * 100;
-      const tx = Math.round(t.x / 100) * 100, tz = Math.round(t.z / 100) * 100;
+      const tx = Math.round(t.x / 100) * 100;
+      const tz = Math.round(t.z / 100) * 100;
       this.autoWps = [{ x: rx, z: rz }, { x: tx, z: rz }, { x: tx, z: tz }, { x: t.x, z: t.z }];
-      this.autoStuck = 0; this.autoReverse = 0;
+      this.autoStuck = 0;
+      this.autoReverse = 0;
     }
     if (Math.abs(this.car.speed) < 4 && this.autoReverse <= 0) this.autoStuck += dt;
     else this.autoStuck = 0;
-    if (this.autoStuck > 2.5) { this.autoReverse = 1.2; this.autoStuck = 0; }
+    if (this.autoStuck > 2.5) {
+      this.autoReverse = 1.2;
+      this.autoStuck = 0;
+    }
     const look = this.pursuitPoint(this.autoWps, 25);
     const want = Math.atan2(look.x - this.car.x, look.z - this.car.z);
-    let dh = want - this.car.heading;
-    while (dh > Math.PI) dh -= Math.PI * 2;
-    while (dh < -Math.PI) dh += Math.PI * 2;
+    const dh = wrapAngle(want - this.car.heading);
     const keys = new Set();
     if (this.autoReverse > 0) {
       this.autoReverse -= dt;
@@ -434,34 +545,49 @@ class Game {
   }
   // Point on the waypoint polyline 25 units ahead of the car's projection.
   pursuitPoint(wps, ahead) {
-    let best = null, bestD = 1e18, bestSeg = 0, bestT = 0;
+    let best = null;
+    let bestD = 1e18;
+    let bestSeg = 0;
+    let bestT = 0;
     for (let i = 0; i < wps.length - 1; i++) {
-      const a = wps[i], b = wps[i + 1];
-      const dx = b.x - a.x, dz = b.z - a.z;
+      const a = wps[i];
+      const b = wps[i + 1];
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
       const len2 = dx * dx + dz * dz || 1;
       const t = Math.max(0, Math.min(1, ((this.car.x - a.x) * dx + (this.car.z - a.z) * dz) / len2));
-      const px = a.x + dx * t, pz = a.z + dz * t;
+      const px = a.x + dx * t;
+      const pz = a.z + dz * t;
       const d = (px - this.car.x) ** 2 + (pz - this.car.z) ** 2;
-      if (d < bestD) { bestD = d; bestSeg = i; bestT = t; best = { x: px, z: pz }; }
+      if (d < bestD) {
+        bestD = d;
+        bestSeg = i;
+        bestT = t;
+        best = { x: px, z: pz };
+      }
     }
     // Walk `ahead` units forward along the polyline from the projection.
     let remaining = ahead;
     let seg = bestSeg;
-    let tx = best.x, tz = best.z;
+    let tx = best.x;
+    let tz = best.z;
     let segT = bestT;
     while (remaining > 0 && seg < wps.length - 1) {
-      const a = wps[seg], b = wps[seg + 1];
+      const a = wps[seg];
+      const b = wps[seg + 1];
       const segLen = Math.hypot(b.x - a.x, b.z - a.z);
       const left = segLen * (1 - segT);
       if (left >= remaining) {
         const f = segT + remaining / segLen;
-        tx = a.x + (b.x - a.x) * f; tz = a.z + (b.z - a.z) * f;
+        tx = a.x + (b.x - a.x) * f;
+        tz = a.z + (b.z - a.z) * f;
         remaining = 0;
       } else {
         remaining -= left;
         seg++;
         segT = 0;
-        tx = wps[seg].x; tz = wps[seg].z;
+        tx = wps[seg].x;
+        tz = wps[seg].z;
       }
     }
     return { x: tx, z: tz };
@@ -470,23 +596,32 @@ class Game {
     this.onFoot = false;
     this.avatar.visible = false;
     this.carMesh.visible = true;
-    this.car.x = this.foot.x; this.car.z = this.foot.z;
+    this.car.x = this.foot.x;
+    this.car.z = this.foot.z;
   }
   exitCar() {
     this.onFoot = true;
-    this.foot.x = this.car.x + 3; this.foot.z = this.car.z;
+    this.foot.x = this.car.x + 3;
+    this.foot.z = this.car.z;
     this.foot.heading = this.car.heading;
     this.avatar.visible = true;
     this.carMesh.visible = false;
   }
   trySteal() {
-    let best = null, bestD = 9;
+    let best = null;
+    let bestD = 9;
     for (const c of this.traffic.cars) {
       const p = c.mesh.position;
       const d = Math.hypot(p.x - this.foot.x, p.z - this.foot.z);
-      if (d < bestD) { bestD = d; best = c; }
+      if (d < bestD) {
+        bestD = d;
+        best = c;
+      }
     }
-    if (!best) { this.hud.showToast('No car close enough to steal.'); return; }
+    if (!best) {
+      this.hud.showToast('No car close enough to steal.');
+      return;
+    }
     best.mesh.visible = false;
     this.traffic.cars = this.traffic.cars.filter(c => c !== best);
     this.wanted = wantedAfterCrime(this.wanted, 'stealCar');
@@ -498,12 +633,14 @@ class Game {
     const r = 2.1;
     for (const b of colliders) {
       if (Math.abs(this.car.x - b.cx) > b.hw + r || Math.abs(this.car.z - b.cz) > b.hd + r) continue;
-      const dx = this.car.x - b.cx, dz = this.car.z - b.cz;
-      const px = b.hw + r - Math.abs(dx), pz = b.hd + r - Math.abs(dz);
+      const dx = this.car.x - b.cx;
+      const dz = this.car.z - b.cz;
+      const px = b.hw + r - Math.abs(dx);
+      const pz = b.hd + r - Math.abs(dz);
       if (px < pz) this.car.x = b.cx + Math.sign(dx || 1) * (b.hw + r);
       else this.car.z = b.cz + Math.sign(dz || 1) * (b.hd + r);
       if (Math.abs(this.car.speed) > 12) {
-        this.car.damageBy(8, MODS(this.state).armor);
+        this.car.damageBy(8, modifiersFor(this.state).armor);
         this.effects.impact(this.car.x, 1, this.car.z, 1);
         this.radio.thud();
         if (this.runner.active) this.runner.active.noDamage = false;
@@ -517,11 +654,11 @@ class Game {
       const p = c.mesh.position;
       const d = Math.hypot(p.x - this.car.x, p.z - this.car.z);
       if (d < 4.4 && d > 0.01) {
-        const push = (4.4 - d);
-        this.car.x += (this.car.x - p.x) / d * push;
-        this.car.z += (this.car.z - p.z) / d * push;
+        const push = 4.4 - d;
+        this.car.x += ((this.car.x - p.x) / d) * push;
+        this.car.z += ((this.car.z - p.z) / d) * push;
         if (Math.abs(this.car.speed) > 10) {
-          this.car.damageBy(5, MODS(this.state).armor);
+          this.car.damageBy(5, modifiersFor(this.state).armor);
           this.effects.impact(this.car.x, 1, this.car.z, 0.7);
           this.radio.thud();
           this.wanted = wantedAfterCrime(this.wanted, 'hitCar');

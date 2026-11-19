@@ -3,6 +3,8 @@
 // marks something the player did; nothing is decoration alone.
 import * as THREE from 'three';
 
+const MAX_PARTICLES = 240;
+
 export class Effects {
   constructor(scene) {
     this.scene = scene;
@@ -11,15 +13,14 @@ export class Effects {
     this.particles = [];
     this.floaters = [];
     this.geo = new THREE.BufferGeometry();
-    this.geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(240 * 3), 3));
+    this.geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(MAX_PARTICLES * 3), 3));
     this.mat = new THREE.PointsMaterial({ color: 0xffc860, size: 0.9, transparent: true, opacity: 0.95 });
     this.points = new THREE.Points(this.geo, this.mat);
     this.points.frustumCulled = false;
     this.scene.add(this.points);
   }
-  impact(x, y, z, strength = 1) {
-    this.shake = Math.min(1.4, this.shake + 0.55 * strength);
-    this.freeze = Math.max(this.freeze, 0.05 * strength);
+  // One burst of sparks from the impact point, flying out in all directions.
+  spawnBurst(x, y, z, strength) {
     const n = Math.floor(26 * strength);
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
@@ -32,17 +33,26 @@ export class Effects {
         life: 0.5 + Math.random() * 0.4,
       });
     }
-    this.particles = this.particles.slice(-240);
+    this.particles = this.particles.slice(-MAX_PARTICLES);
+  }
+  impact(x, y, z, strength = 1) {
+    this.shake = Math.min(1.4, this.shake + 0.55 * strength);
+    this.freeze = Math.max(this.freeze, 0.05 * strength);
+    this.spawnBurst(x, y, z, strength);
   }
   floatText(text, x, y, z) {
     const c = document.createElement('canvas');
-    c.width = 256; c.height = 64;
+    c.width = 256;
+    c.height = 64;
     const g = c.getContext('2d');
     g.font = 'bold 34px system-ui, sans-serif';
-    g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.strokeStyle = '#000'; g.lineWidth = 6;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.strokeStyle = '#000';
+    g.lineWidth = 6;
     g.strokeText(text, 128, 32);
-    g.fillStyle = '#ffd94a'; g.fillText(text, 128, 32);
+    g.fillStyle = '#ffd94a';
+    g.fillText(text, 128, 32);
     const tex = new THREE.CanvasTexture(c);
     const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
     s.scale.set(14, 3.5, 1);
@@ -51,17 +61,27 @@ export class Effects {
     this.floaters.push({ sprite: s, life: 1.1 });
   }
   update(dt) {
-    if (this.freeze > 0) { this.freeze -= dt; return 0; }
+    if (this.freeze > 0) {
+      this.freeze -= dt;
+      return 0;
+    }
     this.shake = Math.max(0, this.shake - dt * 2.2);
     const pos = this.geo.attributes.position.array;
-    for (let i = 0; i < 240; i++) {
+    for (let i = 0; i < MAX_PARTICLES; i++) {
       const p = this.particles[i];
       if (p) {
         p.life -= dt;
         p.vy -= 22 * dt;
-        p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
-        if (p.y < 0.1) { p.y = 0.1; p.vy *= -0.4; }
-        pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = p.z;
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.z += p.vz * dt;
+        if (p.y < 0.1) {
+          p.y = 0.1;
+          p.vy *= -0.4;
+        }
+        pos[i * 3] = p.x;
+        pos[i * 3 + 1] = p.y;
+        pos[i * 3 + 2] = p.z;
       } else {
         pos[i * 3 + 1] = -100;
       }
@@ -74,7 +94,10 @@ export class Effects {
       f.sprite.material.opacity = Math.max(0, f.life);
     }
     const dead = this.floaters.filter(f => f.life <= 0);
-    for (const f of dead) { this.scene.remove(f.sprite); f.sprite.material.dispose(); }
+    for (const f of dead) {
+      this.scene.remove(f.sprite);
+      f.sprite.material.dispose();
+    }
     this.floaters = this.floaters.filter(f => f.life > 0);
     return this.shake;
   }

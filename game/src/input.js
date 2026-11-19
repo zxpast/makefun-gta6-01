@@ -1,5 +1,11 @@
-// Solano Heat — keyboard input. Tracks held keys, edge presses (pressed once
-// per keydown), and a simple action queue the game loop drains each frame.
+// Solano Heat — keyboard input. Tracks held keys, edge presses (fired once
+// per keydown), and a flag the game loop drains every frame.
+// Single letters arrive as-is but lowercased; named keys (arrows, space,
+// shift) keep their names, so the game can ask for 'w' and 'ArrowUp' alike.
+function normKey(e) {
+  return e.key.length === 1 ? e.key.toLowerCase() : e.key;
+}
+
 export class Input {
   constructor() {
     this.held = new Set();
@@ -7,15 +13,14 @@ export class Input {
     this.anyKey = false;
     this.onKeyDown = (e) => {
       if (e.repeat) return;
-      const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      const k = normKey(e);
       this.held.add(k);
       this.pressed.add(k);
       this.anyKey = true;
       if ([' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) e.preventDefault();
     };
     this.onKeyUp = (e) => {
-      const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-      this.held.delete(k);
+      this.held.delete(normKey(e));
     };
     this.onBlur = () => { this.held.clear(); };
     window.addEventListener('keydown', this.onKeyDown);
@@ -27,7 +32,10 @@ export class Input {
   axis(neg, pos) {
     return (this.down(...pos) ? 1 : 0) - (this.down(...neg) ? 1 : 0);
   }
-  endFrame() { this.pressed.clear(); this.anyKey = false; }
+  endFrame() {
+    this.pressed.clear();
+    this.anyKey = false;
+  }
   dispose() {
     window.removeEventListener('keydown', this.onKeyDown);
     window.removeEventListener('keyup', this.onKeyUp);
