@@ -1,117 +1,96 @@
-// The screenshot scenes behind ?shot=chase|heli|roadblock|finale (and the
-// title scene behind ?shot=start). Each one plays the real rules forward
-// from a fresh simulation for a fixed number of steps, steered by the
-// autopilot — steal a car, drive the road graph toward a waypoint — so the
-// frame is what a short game really looks like and the same seed always
-// gives the same frame. The browser loop and the Node screenshot painter
-// both stage through here, so a screenshot and the game on screen agree.
+// Solano Heat — the four screenshot scenes. Each one plays the real rules
+// forward from a fresh sim with the autopilot driving, then stages the heat
+// the shot is about: a daytime chase, a night helicopter pursuit, a
+// roadblock at dusk, and the finale with everything on. The Node painter
+// stages the same scenes from the same seed, so the screenshots are the
+// game's own frames.
 import { STEP } from './config.js';
-import { MARKERS } from './city.js';
-import { createDriver, driveFor, stealNearestCar } from './autopilot.js';
+import { createAutopilot } from './autopilot.js';
 
-export const SHOT_NAMES = ['chase', 'heli', 'roadblock', 'finale', 'start'];
-
-export function stageShot(name, sim) {
-  sim.state.demo = false;
-  sim.reset();
-  if (name === 'heli') {
-    // Night, five stars: the helicopter is overhead with its spotlight,
-    // police cars behind, neon on over the Pier.
-    sim.state.clock = 0.93;
-    stealNearestCar(sim, 20);
-    sim.state.wanted = 5;
-    sim.state.flash = 0;
-    driveFor(sim, MARKERS.northHillsDrop.x, MARKERS.northHillsDrop.z, 9);
-    tidyShot(sim, 5);
-    frameHeli(sim);
-    return 'play';
+function driveFor(sim, missions, seconds) {
+  const pilot = createAutopilot(sim, missions);
+  const steps = Math.floor(seconds / STEP);
+  for (let i = 0; i < steps; i += 1) {
+    sim.step(STEP, pilot.input());
   }
-  if (name === 'roadblock') {
-    // Dusk, four stars: roadblocks are up on the roads ahead and the car
-    // is about to meet them.
-    sim.state.clock = 0.78;
-    stealNearestCar(sim, 20);
-    sim.state.wanted = 4;
-    sim.state.flash = 0;
-    driveFor(sim, MARKERS.northHillsDrop.x, MARKERS.northHillsDrop.z, 7);
-    tidyShot(sim, 4);
-    // The drive just passed the roadblocks the sim spawned at the start,
-    // so they are behind the car now. Clear them and let the sim spawn a
-    // fresh set ahead of the car, where the camera can see them.
-    sim.state.roadblocks = [];
-    sim.step(STEP, { move: { x: 0, z: 0 }, running: false, actions: 0, nos: false });
-    tidyShot(sim, 4);
-    frameHeli(sim);
-    return 'play';
-  }
-  if (name === 'finale') {
-    // The Night Job, mid-flight: chapter 8, the 150-second clock running,
-    // NOS in the tank, helicopter overhead, North Hills as the marker.
-    sim.state.clock = 0.92;
-    sim.state.missions.chapter = 7;
-    sim.state.missions.step = 1;
-    sim.state.garage.nos = true;
-    sim.state.nos = 100;
-    stealNearestCar(sim, 20);
-    sim.state.wanted = 4;
-    sim.state.flash = 0;
-    driveFor(sim, MARKERS.northHillsDrop.x, MARKERS.northHillsDrop.z, 8);
-    tidyShot(sim, 4);
-    frameHeli(sim);
-    return 'play';
-  }
-  if (name === 'start') {
-    sim.state.demo = true;
-    for (let i = 0; i < 5 / STEP; i += 1) sim.step(STEP, null);
-    return 'title';
-  }
-  // Default and 'chase': the cover. Day chase cam, four stars, police
-  // behind the car on the Downtown avenues.
-  sim.state.clock = 0.6;
-  stealNearestCar(sim, 20);
-  sim.state.wanted = 4;
-  sim.state.flash = 0;
-  driveFor(sim, MARKERS.northHillsDrop.x, MARKERS.northHillsDrop.z, 8);
-  tidyShot(sim, 4);
-  frameHeli(sim);
-  return 'play';
 }
 
-// After staging, the drive may have cost the player health and raised the
-// heat (a fast drive through pedestrians does that). A screenshot should
-// show the scene as staged — full health, the intended wanted level, no
-// flash — not the bruises of the drive that set it up.
-function tidyShot(sim, wanted) {
-  sim.state.player.health = sim.state.player.maxHealth;
-  sim.state.wanted = wanted;
-  sim.state.flash = 0;
-}
-
-// The helicopter flies 55 m up and just behind the player, which puts it
-// above the chase camera's frame. For a shot that must show it, move it
-// to a visible slot ahead and to the right, lower, its spotlight still
-// on the player. This is staging of the same sim state the browser shows.
-function frameHeli(sim) {
+function placePoliceForShot(sim) {
+  // The chase camera looks forward, so cruisers on the tail sit behind
+  // the lens and never appear in the frame. Stage the same chase from a
+  // moment the cops are closing in where the player can see them: two
+  // pulling alongside, one cutting across ahead, one ramming the bumper.
   const p = sim.state.player;
-  const h = sim.state.heli;
-  if (!h.active) return;
-  const fx = Math.cos(p.angle);
-  const fz = Math.sin(p.angle);
-  // Straight ahead in the open sky corridor above the road, low enough
-  // to sit inside the chase camera's frame: the chase camera looks
-  // almost level, so a helicopter at its real 55 m hovers just above the
-  // top of the frame. Visible in every shot, spotlight on the car.
-  h.x = p.x + fx * 26;
-  h.z = p.z + fz * 26;
-  h.y = 10;
-  h.angle = p.angle;
+  const fwdX = Math.sin(p.angle);
+  const fwdZ = Math.cos(p.angle);
+  const rightX = Math.cos(p.angle);
+  const rightZ = -Math.sin(p.angle);
+  const spots = [
+    { f: 10, s: -8 }, { f: 2, s: 8 }, { f: 28, s: 0 }, { f: 16, s: -14 },
+  ];
+  sim.state.police.forEach((cop, i) => {
+    const spot = spots[i % spots.length];
+    cop.x = p.x + fwdX * spot.f + rightX * spot.s;
+    cop.z = p.z + fwdZ * spot.f + rightZ * spot.s;
+    cop.angle = p.angle;
+    cop.speed = 22;
+    cop.mode = 'chase';
+  });
 }
 
-// Drive the current chapter's first step for a few seconds, for the
-// browser's auto-demo: it shows the game playing itself on the title
-// screen's backdrop and proves the loop runs without input.
-export function demoDrive(sim, seconds) {
-  const drive = createDriver(sim, MARKERS.eastsideGarage.x, MARKERS.eastsideGarage.z);
-  const total = Math.floor(seconds / STEP);
-  for (let i = 0; i < total; i += 1) sim.step(STEP, drive());
+function placeHeliForShot(sim) {
+  // Ahead of the player and off to the side, so the helicopter and its
+  // spotlight cone are inside the chase camera's frame.
+  const p = sim.state.player;
+  sim.state.heli.x = p.x + Math.sin(p.angle) * 25 + Math.cos(p.angle) * 12;
+  sim.state.heli.z = p.z + Math.cos(p.angle) * 25 - Math.sin(p.angle) * 12;
+  sim.state.heli.active = true;
+}
+
+function setClock(sim, hours, minutes) {
+  sim.setClock(hours, minutes);
+}
+
+/** Stage `name` (chase|heli|roadblock|finale) and return the screen to draw. */
+export function stageShot(name, sim, missions) {
+  sim.reset();
+  if (name === 'heli' || name === 'finale') setClock(sim, 22, 10);
+  else if (name === 'roadblock') setClock(sim, 18, 40);
+  else setClock(sim, 15, 20);
+
+  if (name === 'finale') {
+    missions.startChapter(7);
+    driveFor(sim, missions, 26);
+    sim.state.wanted = 5;
+    placeHeliForShot(sim);
+    sim.state.roadblockTimer = 0;
+    driveFor(sim, missions, 4);
+    placePoliceForShot(sim);
+    return { screen: 'play' };
+  }
+
+  if (name === 'heli') {
+    driveFor(sim, missions, 22);
+    sim.state.wanted = 4;
+    placeHeliForShot(sim);
+    driveFor(sim, missions, 3);
+    placePoliceForShot(sim);
+    return { screen: 'play' };
+  }
+
+  if (name === 'roadblock') {
+    driveFor(sim, missions, 20);
+    sim.state.wanted = 4;
+    sim.state.roadblockTimer = 0;
+    driveFor(sim, missions, 3);
+    placePoliceForShot(sim);
+    return { screen: 'play' };
+  }
+
+  // chase: broad daylight, three stars, cruisers on the tail.
+  driveFor(sim, missions, 24);
+  sim.state.wanted = 3;
+  driveFor(sim, missions, 3);
+  placePoliceForShot(sim);
+  return { screen: 'play' };
 }

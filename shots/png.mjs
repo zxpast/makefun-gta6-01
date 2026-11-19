@@ -1,23 +1,21 @@
-// A minimal PNG encoder for the screenshot painter: RGBA buffer in,
-// a PNG file out. One filter (none) and zlib's deflate from the Node
-// standard library, with the CRC32 the format requires. No dependency.
+// A minimal PNG encoder: RGBA canvas bytes, one filter-0 scanline each,
+// zlib deflate, and the IHDR / IDAT / IEND chunks with CRC32. Node's zlib
+// does the compression; this file only lays out the PNG format.
 import { deflateSync } from 'node:zlib';
 
 const CRC_TABLE = (() => {
-  const table = new Int32Array(256);
+  const table = new Uint32Array(256);
   for (let n = 0; n < 256; n += 1) {
     let c = n;
     for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    table[n] = c;
+    table[n] = c >>> 0;
   }
   return table;
 })();
 
-function crc32(buffer) {
+function crc32(bytes) {
   let c = 0xffffffff;
-  for (let i = 0; i < buffer.length; i += 1) {
-    c = CRC_TABLE[(c ^ buffer[i]) & 0xff] ^ (c >>> 8);
-  }
+  for (let i = 0; i < bytes.length; i += 1) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
   return (c ^ 0xffffffff) >>> 0;
 }
 
@@ -30,26 +28,26 @@ function chunk(type, data) {
   return out;
 }
 
-export function encodePng(width, height, rgba) {
+/** Encode a {width, height, data} RGBA canvas as a PNG buffer. */
+export function encodePng(canvas) {
+  const { width, height, data } = canvas;
+  const raw = Buffer.alloc(height * (1 + width * 4));
+  for (let y = 0; y < height; y += 1) {
+    raw[y * (1 + width * 4)] = 0;
+    Buffer.from(data.buffer, y * width * 4, width * 4).copy(raw, y * (1 + width * 4) + 1);
+  }
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(width, 0);
   ihdr.writeUInt32BE(height, 4);
   ihdr[8] = 8; // bit depth
-  ihdr[9] = 6; // colour type 6: RGBA
-  ihdr[10] = 0; // compression
-  ihdr[11] = 0; // filter
-  ihdr[12] = 0; // interlace
-  const raw = Buffer.alloc((width * 4 + 1) * height);
-  for (let y = 0; y < height; y += 1) {
-    const row = y * (width * 4 + 1);
-    raw[row] = 0; // filter: none
-    Buffer.from(rgba.buffer, rgba.byteOffset + y * width * 4, width * 4).copy(raw, row + 1);
-  }
-  const idat = deflateSync(raw, { level: 9 });
+  ihdr[9] = 6; // colour type RGBA
+  ihdr[10] = 0;
+  ihdr[11] = 0;
+  ihdr[12] = 0;
   return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     chunk('IHDR', ihdr),
-    chunk('IDAT', idat),
+    chunk('IDAT', deflateSync(raw, { level: 6 })),
     chunk('IEND', Buffer.alloc(0)),
   ]);
 }

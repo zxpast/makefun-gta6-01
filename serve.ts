@@ -1,10 +1,8 @@
-// Solano Heat — a tiny static server for game/ (Node 22, standard library only).
-//
-// A development convenience, not a web server for the internet: run
-// `node serve.ts` and open http://localhost:8080 to play the game. It
-// serves only files under game/, sends the MIME types a browser game
-// needs, and refuses any path that climbs out of game/.
-// `--port <n>` picks another port.
+// Solano Heat — a tiny static server for game/ (Node 22, standard library
+// only). A development convenience, not a web server for the internet: run
+// `node serve.ts` and open http://localhost:8080 to play. It serves only
+// files under game/, sends the MIME types a browser game needs, and refuses
+// any path that climbs out of game/. `--port <n>` picks another port.
 import { createReadStream, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';
@@ -12,9 +10,9 @@ import { fileURLToPath } from 'node:url';
 
 const gameRoot = resolve(fileURLToPath(new URL('./game', import.meta.url)));
 
-function pickPort(args) {
-  const at = args.indexOf('--port');
-  const wanted = at === -1 ? 8080 : Number(args[at + 1]);
+function pickPort(argv) {
+  const at = argv.indexOf('--port');
+  const wanted = at === -1 ? 8080 : Number(argv[at + 1]);
   return Number.isInteger(wanted) && wanted > 0 && wanted < 65536 ? wanted : 8080;
 }
 
@@ -34,15 +32,8 @@ const TYPES = {
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.woff2': 'font/woff2',
-  '.wav': 'audio/wav',
-  '.mp3': 'audio/mpeg',
-  '.ogg': 'audio/ogg',
   '.txt': 'text/plain; charset=utf-8',
 };
-
-function mimeFor(file) {
-  return TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream';
-}
 
 const server = createServer((request, response) => {
   let pathname;
@@ -68,7 +59,7 @@ const server = createServer((request, response) => {
     return;
   }
   response.writeHead(200, {
-    'content-type': mimeFor(file),
+    'content-type': TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream',
     'content-length': bytes,
     'cache-control': 'no-store',
   });

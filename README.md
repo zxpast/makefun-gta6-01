@@ -23,7 +23,7 @@ Port Solano is a 960 by 640 metre open world: six districts (North Hills, Downto
 - **Combat** — fists on foot (Space), and three guns (F): pistol, SMG and shotgun, with drive-by shooting from the car. Buy ammo at the garage.
 - **Radio** — three WebAudio stations (R to change): SOL FM, NEON NIGHTS, PIER TALK. All music is synthesised live; there are no audio files.
 - **Garage** — at the Eastside Garage (G when you are there): armor (+60 max health, $800), engine tune (+6 m/s, $1,200), NOS kit ($600, refill $100), and weapon ammo.
-- **HUD and minimap** — cash, wanted stars, game clock, district name, mission objective, a countdown on timed jobs, a clean/spotted line on quiet ones, speed, NOS, weapon, radio, and a live minimap with roads, markers, police and the helicopter.
+- **HUD and minimap** — cash, wanted stars, game clock, district name, mission objective, a countdown on timed jobs, speed, NOS, weapon, radio, and a live minimap with roads, markers, police and the helicopter.
 - **Save** — progress, cash, garage and completed missions persist in the browser. An autopilot (`?auto=1`) plays the game itself as a demo.
 
 ## Controls
@@ -40,7 +40,7 @@ Port Solano is a 960 by 640 metre open world: six districts (North Hills, Downto
 | G | Garage (at the Eastside Garage) |
 | M | Missions and side jobs |
 | 1–4 | Take a side job / buy in the garage |
-| 5–6 | Buy SMG / shotgun ammo in the garage |
+| 5–7 | Buy pistol / SMG / shotgun in the garage |
 | P / Esc | Pause |
 | N | Sound on / off |
 

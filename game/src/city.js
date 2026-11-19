@@ -1,215 +1,171 @@
-// Port Solano, built from a seed: an 80-metre road grid over a 960 by 640
-// metre map, six districts, and one or two seeded buildings per block with
-// a height that fits its district. The same seed always builds the same
-// city. This module only answers where things are — which district a point
-// is in, whether it is on asphalt, which buildings stand in the way, and
-// the road graph the traffic and the autopilot drive on. No drawing here,
-// no browser in here.
+// Port Solano's map: a 120 m road grid, six districts, procedural buildings
+// and the named places missions point at. Pure data and geometry — no DOM,
+// no Three.js — so the sim, the autopilot and the Node screenshot painter
+// all share exactly the same city.
 import { CITY, DISTRICTS } from './config.js';
-import { pick, range, rangeInt } from './random.js';
 
-export const MARKERS = {
-  // Every marker sits on a road line (roads run every 80 m at x/z =
-  // 80, 160, 240, ...), never inside a block: a marker in a block is
-  // unreachable behind building walls.
-  safehouse: { x: 160, z: 400, label: 'Safehouse' },
-  eastsideGarage: { x: 800, z: 160, label: 'Eastside Garage' },
-  docksPickup: { x: 720, z: 560, label: 'Docks Pickup' },
-  northHillsDrop: { x: 160, z: 80, label: 'North Hills Drop' },
-  downtownPickup: { x: 400, z: 160, label: 'Downtown Pickup' },
-  marinaDrop: { x: 480, z: 560, label: 'Marina Drop' },
-  sunsetPier: { x: 80, z: 480, label: 'Sunset Pier' },
-  turfWest: { x: 80, z: 160, label: 'Turf: Overlook' },
-  turfNorth: { x: 160, z: 80, label: 'Turf: Hills' },
-  turfEast: { x: 240, z: 160, label: 'Turf: Ridge' },
-  hospital: { x: 480, z: 240, label: 'Hospital' },
-  pierEnd: { x: 80, z: 560, label: 'Pier End' },
-};
+const VERTICALS = [60, 180, 300, 420, 540, 660, 780, 900];
+const HORIZONTALS = [60, 180, 300, 420, 540];
 
-export function createCity(random) {
-  const vertical = [];
-  const horizontal = [];
-  for (let x = CITY.roadGap; x < CITY.width; x += CITY.roadGap) vertical.push(x);
-  for (let z = CITY.roadGap; z < CITY.height; z += CITY.roadGap) horizontal.push(z);
-
-  // Intersections of the grid, as the nodes of the road graph.
-  const nodes = [];
-  for (const x of vertical) {
-    for (const z of horizontal) nodes.push({ x, z });
-  }
-  // Edge roads along the map border, so the graph reaches every district.
-  for (const x of [0, CITY.width]) {
-    for (const z of horizontal) nodes.push({ x, z });
-  }
-  for (const z of [0, CITY.height]) {
-    for (const x of vertical) nodes.push({ x, z });
-  }
-
+export function buildCity(random) {
   const buildings = [];
-  const halfRoad = CITY.roadWidth / 2;
-  const cols = Math.floor(CITY.width / CITY.roadGap);
-  const rows = Math.floor(CITY.height / CITY.roadGap);
-  for (let bx = 0; bx < cols; bx += 1) {
-    for (let bz = 0; bz < rows; bz += 1) {
-      const blockX = bx * CITY.roadGap + halfRoad + CITY.blockMargin;
-      const blockZ = bz * CITY.roadGap + halfRoad + CITY.blockMargin;
-      const blockW = CITY.roadGap - CITY.roadWidth - CITY.blockMargin * 2;
-      const blockH = CITY.roadGap - CITY.roadWidth - CITY.blockMargin * 2;
-      const centreX = blockX + blockW / 2;
-      const centreZ = blockZ + blockH / 2;
-      const district = districtAt(centreX, centreZ) || DISTRICTS[0];
-      const count = rangeInt(random, 1, 2);
-      for (let n = 0; n < count; n += 1) {
-        const w = range(random, 14, Math.max(15, blockW * 0.55));
-        const h = range(random, 14, Math.max(15, blockH * 0.55));
-        const x = blockX + range(random, 0, Math.max(0.5, blockW - w));
-        const z = blockZ + range(random, 0, Math.max(0.5, blockH - h));
+  // One building lot per block between four roads; each lot holds 1–3 towers
+  // with a height that grows toward Downtown.
+  for (let ix = 0; ix < VERTICALS.length - 1; ix += 1) {
+    for (let iz = 0; iz < HORIZONTALS.length - 1; iz += 1) {
+      const x0 = VERTICALS[ix] + 14;
+      const x1 = VERTICALS[ix + 1] - 14;
+      const z0 = HORIZONTALS[iz] + 14;
+      const z1 = HORIZONTALS[iz + 1] - 14;
+      const cx = (VERTICALS[ix] + VERTICALS[ix + 1]) / 2;
+      const downtown = Math.hypot(cx - 720, (HORIZONTALS[iz] + HORIZONTALS[iz + 1]) / 2 - 120);
+      const tall = Math.max(0, 1 - downtown / 520);
+      const count = random.int(1, 3);
+      for (let k = 0; k < count; k += 1) {
+        const w = random.range(16, 34);
+        const d = random.range(16, 34);
+        const bx = random.range(x0 + w / 2, x1 - w / 2);
+        const bz = random.range(z0 + d / 2, z1 - d / 2);
         buildings.push({
-          x, z, w, h,
-          height: range(random, district.minH, district.maxH),
-          shade: pick(random, ['a', 'b', 'c']),
-          neon: random() < 0.22,
+          x: bx, z: bz, w, d,
+          h: 8 + random.range(0, 26) + tall * random.range(10, 42),
+          shade: random.range(0.75, 1.15),
         });
       }
     }
   }
 
-  const parks = [{ x: 400, z: 40, w: 60, h: 56 }];
-  const water = { x: 0, z: CITY.height - 24, w: 320, h: 24 };
-  const pier = { x: 24, z: 480, w: 48, h: 160 };
-  return {
-    roads: { vertical, horizontal },
-    nodes,
-    buildings,
-    parks,
-    water,
-    pier,
-    halfRoad,
-    districts: DISTRICTS,
+  const places = {
+    garage: { x: 700, z: 300, name: 'Eastside Garage' },
+    safehouse: { x: 600, z: 540, name: 'Marina Safehouse' },
+    pier: { x: 120, z: 540, name: 'Sunset Pier' },
+    docks: { x: 840, z: 540, name: 'The Docks' },
+    downtown: { x: 720, z: 180, name: 'Downtown Plaza' },
+    hills: { x: 180, z: 60, name: 'North Hills' },
+    hospital: { x: 420, z: 180, name: 'Solano General' },
+    market: { x: 300, z: 420, name: 'Pier Market' },
   };
+
+  return { verticals: VERTICALS, horizontals: HORIZONTALS, buildings, places };
 }
 
 export function districtAt(x, z) {
   for (const d of DISTRICTS) {
-    if (x >= d.x && x < d.x + d.w && z >= d.z && z < d.z + d.h) return d;
+    if (x >= d.x0 && x < d.x1 && z >= d.z0 && z < d.z1) return d.name;
   }
-  return null;
+  return 'Port Solano';
 }
 
-export function districtNameAt(x, z) {
-  const d = districtAt(x, z);
-  return d ? d.name : 'Port Solano';
-}
-
-export function onRoad(city, x, z) {
-  const half = city.halfRoad;
-  for (const rx of city.roads.vertical) if (Math.abs(x - rx) <= half) return true;
-  for (const rz of city.roads.horizontal) if (Math.abs(z - rz) <= half) return true;
-  return false;
-}
-
-// The nearest point on a road centre line, for snapping cars onto roads.
-export function nearestRoadPoint(city, x, z) {
-  let bestX = x;
-  let bestD = Infinity;
-  for (const rx of city.roads.vertical) {
-    const d = Math.abs(x - rx);
-    if (d < bestD) { bestD = d; bestX = rx; }
-  }
-  let bestZ = z;
-  let bestDz = Infinity;
-  for (const rz of city.roads.horizontal) {
-    const d = Math.abs(z - rz);
-    if (d < bestDz) { bestDz = d; bestZ = rz; }
-  }
-  return bestD <= bestDz ? { x: bestX, z } : { x, z: bestZ };
-}
-
-// The building a rectangle overlaps, or null. Walls are solid.
-export function hitsBuilding(city, x, z, w, h) {
-  for (const b of city.buildings) {
-    if (x < b.x + b.w && x + w > b.x && z < b.z + b.h && z + h > b.z) return b;
-  }
-  return null;
-}
-
-// A straight line of sight between two points is blocked by any building
-// whose footprint the segment crosses (sampled every 4 metres).
-export function lineBlocked(city, ax, az, bx, bz) {
-  const d = Math.hypot(bx - ax, bz - az);
-  const steps = Math.max(1, Math.ceil(d / 4));
-  for (let i = 1; i < steps; i += 1) {
-    const t = i / steps;
-    const x = ax + (bx - ax) * t;
-    const z = az + (bz - az) * t;
-    if (hitsBuilding(city, x - 0.5, z - 0.5, 1, 1)) return true;
-  }
-  return false;
-}
-
-export function clampToCity(x, z, margin) {
-  return {
-    x: Math.min(CITY.width - margin, Math.max(margin, x)),
-    z: Math.min(CITY.height - margin, Math.max(margin, z)),
-  };
-}
-
-// Breadth-first route over the road graph from (sx, sz) to (tx, tz).
-// Returns a list of {x, z} waypoints, or an empty list when already there.
-export function routeOnRoads(city, sx, sz, tx, tz) {
-  const start = nearestNode(city, sx, sz);
-  const goal = nearestNode(city, tx, tz);
-  // Node indices are numbers and 0 is a valid node — test for -1, not falsy.
-  if (start === -1 || goal === -1) return [];
-  if (start === goal) return [{ x: tx, z: tz }];
-  const prev = new Map();
-  const queue = [start];
-  prev.set(start, null);
-  while (queue.length > 0) {
-    const cur = queue.shift();
-    if (cur === goal) break;
-    for (const nb of neighbours(city, cur)) {
-      if (!prev.has(nb)) {
-        prev.set(nb, cur);
-        queue.push(nb);
-      }
-    }
-  }
-  if (!prev.has(goal)) return [{ x: tx, z: tz }];
-  const path = [];
-  let cur = goal;
-  while (cur !== null) {
-    path.unshift(city.nodes[cur]);
-    cur = prev.get(cur);
-  }
-  path.push({ x: tx, z: tz });
-  return path;
-}
-
-function nearestNode(city, x, z) {
-  let best = -1;
-  let bestD = Infinity;
-  for (let i = 0; i < city.nodes.length; i += 1) {
-    const n = city.nodes[i];
-    const d = (n.x - x) * (n.x - x) + (n.z - z) * (n.z - z);
-    if (d < bestD) { bestD = d; best = i; }
-  }
+export function nearestVertical(x) {
+  let best = VERTICALS[0];
+  for (const v of VERTICALS) if (Math.abs(v - x) < Math.abs(best - x)) best = v;
   return best;
 }
 
-function neighbours(city, index) {
-  const n = city.nodes[index];
-  const out = [];
-  for (let i = 0; i < city.nodes.length; i += 1) {
-    if (i === index) continue;
-    const m = city.nodes[i];
-    const dx = Math.abs(m.x - n.x);
-    const dz = Math.abs(m.z - n.z);
-    // Adjacent along the same road line, one gap apart.
-    if ((dx === CITY.roadGap && dz === 0) || (dz === CITY.roadGap && dx === 0)) out.push(i);
-    // Border nodes connect to the nearest grid intersection.
-    if ((n.x === 0 || n.x === CITY.width || n.z === 0 || n.z === CITY.height)
-      && ((dx === CITY.roadGap && dz === 0) || (dz === CITY.roadGap && dx === 0))) out.push(i);
+export function nearestHorizontal(z) {
+  let best = HORIZONTALS[0];
+  for (const h of HORIZONTALS) if (Math.abs(h - z) < Math.abs(best - h)) best = h;
+  return best;
+}
+
+export function onRoad(x, z) {
+  return Math.abs(x - nearestVertical(x)) <= CITY.roadHalf + 2
+    || Math.abs(z - nearestHorizontal(z)) <= CITY.roadHalf + 2;
+}
+
+function segmentHitsRect(ax, az, bx, bz, r) {
+  // Slab test: does segment AB cross the rectangle (with a small margin)?
+  const minX = r.x - r.w / 2 - 1;
+  const maxX = r.x + r.w / 2 + 1;
+  const minZ = r.z - r.d / 2 - 1;
+  const maxZ = r.z + r.d / 2 + 1;
+  const dx = bx - ax;
+  const dz = bz - az;
+  let t0 = 0;
+  let t1 = 1;
+  if (Math.abs(dx) < 1e-9) {
+    if (ax < minX || ax > maxX) return false;
+  } else {
+    let a = (minX - ax) / dx;
+    let b = (maxX - ax) / dx;
+    if (a > b) [a, b] = [b, a];
+    t0 = Math.max(t0, a);
+    t1 = Math.min(t1, b);
+    if (t0 > t1) return false;
   }
-  return out;
+  if (Math.abs(dz) < 1e-9) {
+    if (az < minZ || az > maxZ) return false;
+  } else {
+    let a = (minZ - az) / dz;
+    let b = (maxZ - az) / dz;
+    if (a > b) [a, b] = [b, a];
+    t0 = Math.max(t0, a);
+    t1 = Math.min(t1, b);
+    if (t0 > t1) return false;
+  }
+  return true;
+}
+
+/** True when no building stands between the two points (2D, height ignored). */
+export function hasLineOfSight(city, ax, az, bx, bz) {
+  for (const b of city.buildings) {
+    if (segmentHitsRect(ax, az, bx, bz, b)) return false;
+  }
+  return true;
+}
+
+function nodeId(ix, iz) { return iz * VERTICALS.length + ix; }
+
+/** Breadth-first route over intersections, as a list of {x, z} waypoints. */
+export function routeBetween(ax, az, bx, bz) {
+  const startX = VERTICALS.indexOf(nearestVertical(ax));
+  const startZ = HORIZONTALS.indexOf(nearestHorizontal(az));
+  const endX = VERTICALS.indexOf(nearestVertical(bx));
+  const endZ = HORIZONTALS.indexOf(nearestHorizontal(bz));
+  const start = nodeId(startX, startZ);
+  const goal = nodeId(endX, endZ);
+  const prev = new Map([[start, -1]]);
+  const queue = [start];
+  while (queue.length > 0) {
+    const cur = queue.shift();
+    if (cur === goal) break;
+    const cx = cur % VERTICALS.length;
+    const cz = Math.floor(cur / VERTICALS.length);
+    for (const [nx, nz] of [[cx + 1, cz], [cx - 1, cz], [cx, cz + 1], [cx, cz - 1]]) {
+      if (nx < 0 || nx >= VERTICALS.length || nz < 0 || nz >= HORIZONTALS.length) continue;
+      const nid = nodeId(nx, nz);
+      if (!prev.has(nid)) {
+        prev.set(nid, cur);
+        queue.push(nid);
+      }
+    }
+  }
+  if (!prev.has(goal)) return [{ x: bx, z: bz }];
+  const path = [];
+  let cur = goal;
+  while (cur !== -1) {
+    path.push({ x: VERTICALS[cur % VERTICALS.length], z: HORIZONTALS[Math.floor(cur / VERTICALS.length)] });
+    cur = prev.get(cur);
+  }
+  path.reverse();
+  const lastNode = path[path.length - 1];
+  if (!lastNode || lastNode.x !== bx || lastNode.z !== bz) path.push({ x: bx, z: bz });
+  return path;
+}
+
+/** Clamp a point into the city and push it out of any building footprint. */
+export function resolveCollision(city, x, z, radius) {
+  let nx = Math.min(CITY.width - 4, Math.max(4, x));
+  let nz = Math.min(CITY.height - 4, Math.max(4, z));
+  for (const b of city.buildings) {
+    const dx = nx - b.x;
+    const dz = nz - b.z;
+    const ox = b.w / 2 + radius - Math.abs(dx);
+    const oz = b.d / 2 + radius - Math.abs(dz);
+    if (ox > 0 && oz > 0) {
+      if (ox < oz) nx = b.x + (dx > 0 ? 1 : -1) * (b.w / 2 + radius);
+      else nz = b.z + (dz > 0 ? 1 : -1) * (b.d / 2 + radius);
+    }
+  }
+  return { x: nx, z: nz };
 }

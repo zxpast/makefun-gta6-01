@@ -1,141 +1,201 @@
-// Node tests for Port Solano: no browser, no Three.js. They import the
-// pure modules (random, city, missions, sim, autopilot, camera, shots),
-// play the game through the same sim.step() the browser uses, and check
-// the rules hold: missions 1 and 2 finish under the autopilot, a 60-second
-// free drive stays sane, the helicopter and roadblocks appear at four
-// stars, the garage and weapons spend cash, and the same seed plays the
-// same game twice. Browser-only files are syntax-checked with node --check.
-// Exit non-zero on the first failure.
-import { execSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+// Solano Heat — Node tests for the sim. Every check prints PASS or FAIL
+// and the process exits non-zero on the first failure, so a broken rule
+// cannot hide behind a passing build.
+//
+//   node test/sim-test.mjs
 import { createRandom } from '../game/src/random.js';
+import { buildCity, districtAt, hasLineOfSight, routeBetween } from '../game/src/city.js';
 import { createSim } from '../game/src/sim.js';
-import { driveFree, playChapter, stealNearestCar, createDriver } from '../game/src/autopilot.js';
+import { createMissions } from '../game/src/missions.js';
+import { createAutopilot } from '../game/src/autopilot.js';
 import { stageShot } from '../game/src/shots.js';
 import { STEP } from '../game/src/config.js';
 
-const here = dirname(fileURLToPath(import.meta.url));
-const root = join(here, '..');
 let passed = 0;
-
-function check(name, ok, detail) {
+function check(name, ok, detail = '') {
   if (!ok) {
-    console.error(`FAIL ${name}${detail ? ` — ${detail}` : ''}`);
+    console.log(`FAIL ${name} ${detail}`);
     process.exit(1);
   }
   passed += 1;
   console.log(`PASS ${name}${detail ? ` — ${detail}` : ''}`);
 }
 
-function freshSim(seed) {
-  return createSim(createRandom(seed), { seed });
+function freshGame(seed = 7) {
+  const random = createRandom(seed);
+  const city = buildCity(random);
+  const sim = createSim(random, city);
+  const missions = createMissions(sim);
+  return { random, city, sim, missions };
 }
 
-// 1. Every game file parses.
-const files = [
-  'game/src/random.js', 'game/src/config.js', 'game/src/city.js',
-  'game/src/missions.js', 'game/src/sim.js', 'game/src/camera3d.js',
-  'game/src/autopilot.js', 'game/src/shots.js', 'game/src/input.js',
-  'game/src/audio.js', 'game/src/world3d.js', 'game/src/hud.js',
-  'game/src/save.js', 'game/src/main.js', 'game/index.html',
-];
-for (const f of files) {
-  if (f.endsWith('.html')) continue;
-  execSync(`node --check ${join(root, f)}`, { stdio: 'pipe' });
-}
-check('all js files parse', true, `${files.length - 1} files`);
-
-// 2. Determinism: the same seed and the same inputs play the same game.
-{
-  const a = freshSim(7);
-  const b = freshSim(7);
-  const input = { move: { x: 0, z: -1 }, running: false, actions: 0, nos: false };
-  for (let i = 0; i < 600; i += 1) {
-    a.step(STEP, input);
-    b.step(STEP, input);
+function driveFor(sim, missions, seconds) {
+  const pilot = createAutopilot(sim, missions);
+  const steps = Math.floor(seconds / STEP);
+  for (let i = 0; i < steps; i += 1) {
+    sim.step(STEP, pilot.input());
+    missions.update(STEP);
+    if (sim.state.busted || sim.state.dead) break;
   }
+}
+
+// 1 — the city has buildings and six districts that cover the map.
+{
+  const { city } = freshGame();
+  check('city has buildings', city.buildings.length > 40, `${city.buildings.length} towers`);
+  check('district north hills', districtAt(100, 100) === 'North Hills');
+  check('district docks', districtAt(900, 600) === 'The Docks');
+  check('district downtown', districtAt(700, 100) === 'Downtown');
+}
+
+// 2 — a route over the road grid starts near A and ends at B.
+{
+  const path = routeBetween(60, 60, 900, 540);
+  check('route exists', path.length > 4, `${path.length} waypoints`);
+  const last = path[path.length - 1];
+  check('route ends at target', last.x === 900 && last.z === 540);
+}
+
+// 3 — line of sight: an open road is clear, a tower blocks the view.
+{
+  const { city } = freshGame();
+  check('LOS along a road', hasLineOfSight(city, 60, 60, 60, 540));
+  const b = city.buildings[0];
+  const blocked = !hasLineOfSight(city, b.x - b.w, b.z, b.x + b.w, b.z);
+  check('LOS blocked by a tower', blocked, `tower at ${Math.round(b.x)},${Math.round(b.z)}`);
+}
+
+// 4 — two sims from the same seed drive identically (determinism).
+{
+  const a = freshGame();
+  const b = freshGame();
+  a.missions.startChapter(0);
+  b.missions.startChapter(0);
+  driveFor(a.sim, a.missions, 30);
+  driveFor(b.sim, b.missions, 30);
+  const pa = a.sim.state.player;
+  const pb = b.sim.state.player;
   check(
-    'deterministic replay',
-    a.state.player.x === b.state.player.x && a.state.player.z === b.state.player.z
-      && a.state.cars[0].x === b.state.cars[0].x,
-    `player (${a.state.player.x.toFixed(2)}, ${a.state.player.z.toFixed(2)})`,
+    'deterministic 30s drive',
+    Math.abs(pa.x - pb.x) < 0.001 && Math.abs(pa.z - pb.z) < 0.001 && a.sim.state.cash === b.sim.state.cash,
+    `pos ${pa.x.toFixed(1)},${pa.z.toFixed(1)}`,
   );
 }
 
-// 3. Autopilot finishes chapter 1 (steal + deliver to the garage).
+// 5 — the autopilot steals a car and finishes chapter 1.
 {
-  const sim = freshSim(7);
-  const result = playChapter(sim, 240);
-  check('autopilot chapter 1', result.done, `${result.seconds.toFixed(1)}s, cash $${sim.state.missions.cash}`);
-  check('chapter 1 pays $300', sim.state.missions.cash === 300, `$${sim.state.missions.cash}`);
+  const { sim, missions } = freshGame();
+  missions.startChapter(0);
+  driveFor(sim, missions, 120);
+  check('chapter 1 complete', missions.state.completed.includes('first-ride'), `cash $${sim.state.cash}`);
+  check('chapter 1 paid', sim.state.cash >= 200, `$${sim.state.cash}`);
+  check('car was stolen', sim.state.stats.carsStolen >= 1);
 }
 
-// 4. Autopilot finishes chapter 2 (courier downtown to the Marina).
+// 6 — chapter 2 (courier) completes too.
 {
-  const sim = freshSim(7);
-  const first = playChapter(sim, 240);
-  check('autopilot chapter 1 (setup for 2)', first.done, `${first.seconds.toFixed(1)}s`);
-  const second = playChapter(sim, 300);
-  check('autopilot chapter 2', second.done, `${second.seconds.toFixed(1)}s, cash $${sim.state.missions.cash}`);
+  const { sim, missions } = freshGame();
+  missions.startChapter(1);
+  driveFor(sim, missions, 150);
+  check('chapter 2 complete', missions.state.completed.includes('courier'), `cash $${sim.state.cash}`);
 }
 
-// 5. A 60-second free drive stays sane and covers ground.
+// 7 — stealing a car raises the wanted level and brings police.
 {
-  const sim = freshSim(11);
-  const result = driveFree(sim, 60, createRandom(99));
-  check('60s free drive', result.ok, `${result.distance.toFixed(0)}m${result.reason ? ` (${result.reason})` : ''}`);
-  check('60s drive covers ground', result.distance > 200, `${result.distance.toFixed(0)}m`);
+  const { sim } = freshGame();
+  const before = sim.wantedStars();
+  const pilot = createAutopilot(sim, createMissions(sim));
+  for (let i = 0; i < 600 && !sim.state.car; i += 1) sim.step(STEP, pilot.input());
+  check('stole a car', !!sim.state.car);
+  check('wanted rose after theft', sim.wantedStars() > before, `${before} -> ${sim.wantedStars()} stars`);
+  for (let i = 0; i < 120; i += 1) sim.step(STEP, { steer: 0, throttle: 0, run: false, nos: false, enter: false, exit: false, shoot: false, weaponSwitch: false, radio: false, garage: false, garageBuy: null, ammoBuy: null });
+  check('police spawned', sim.state.police.length >= 2, `${sim.state.police.length} cruisers`);
 }
 
-// 6. Four stars bring the helicopter and three roadblocks. The player
-// is in a car and driving, so the test measures the chase, not a bust.
+// 8 — at four stars the helicopter and roadblocks show up.
 {
-  const sim = freshSim(7);
-  const ok = stealNearestCar(sim, 20);
-  check('heli test setup steals car', ok === true, '');
+  const { sim } = freshGame();
   sim.state.wanted = 4;
-  const drive = createDriver(sim, 800, 560);
-  for (let i = 0; i < 600; i += 1) sim.step(STEP, drive());
-  check('heli active at 4 stars', sim.state.heli.active === true, `wanted ${sim.state.wanted}`);
-  check('roadblocks up at 4 stars', sim.state.roadblocks.length === 3, `${sim.state.roadblocks.length} blocks`);
+  sim.state.roadblockTimer = 0;
+  const idle = { steer: 0, throttle: 0, run: false, nos: false, enter: false, exit: false, shoot: false, weaponSwitch: false, radio: false, garage: false, garageBuy: null, ammoBuy: null };
+  for (let i = 0; i < 180; i += 1) sim.step(STEP, idle);
+  check('helicopter at 4 stars', sim.state.heli.active);
+  check('roadblock at 4 stars', sim.state.roadblocks.length >= 1, `${sim.state.roadblocks.length} blocks`);
 }
 
-// 7. The garage spends cash and grants the upgrades.
+// 9 — heat fades when the player stays out of sight. The hiding spot is
+// mid-block at (720, 360), where the towers break every line of sight.
 {
-  const sim = freshSim(7);
-  sim.state.missions.cash = 3000;
-  check('buy armor', sim.buyGarage('armor') === true, `cash $${sim.state.missions.cash}`);
-  check('buy speed', sim.buyGarage('speed') === true, `cash $${sim.state.missions.cash}`);
-  check('buy nos', sim.buyGarage('nos') === true, `cash $${sim.state.missions.cash}, nos ${sim.state.nos}%`);
-  check('garage cash spent', sim.state.missions.cash === 3000 - 800 - 1200 - 600, `$${sim.state.missions.cash}`);
-  check('armor raises max health', sim.state.player.maxHealth === 160, `${sim.state.player.maxHealth}`);
+  const { sim } = freshGame();
+  sim.state.player.x = 720;
+  sim.state.player.z = 360;
+  sim.state.wanted = 2;
+  sim.state.losTimer = 10;
+  const idle = { steer: 0, throttle: 0, run: false, nos: false, enter: false, exit: false, shoot: false, weaponSwitch: false, radio: false, garage: false, garageBuy: null, ammoBuy: null };
+  for (let i = 0; i < 60 * 30; i += 1) sim.step(STEP, idle);
+  check('wanted fades while hidden', sim.wantedStars() === 0, `${sim.state.wanted.toFixed(2)} left`);
 }
 
-// 8. Weapons: buying the SMG stocks ammo, shooting spends it.
+// 10 — garage: an engine tune costs cash and adds top speed; a second
+// big purchase is refused when the cash runs out.
 {
-  const sim = freshSim(7);
-  sim.state.missions.cash = 1000;
-  check('buy smg', sim.buyWeapon('smg') === true, `ammo ${sim.state.ammo.smg}`);
-  sim.state.weapon = 1;
-  sim.step(STEP, { move: { x: 0, z: 0 }, running: false, actions: 4, nos: false });
-  check('shoot spends ammo', sim.state.ammo.smg === 119, `${sim.state.ammo.smg} left`);
+  const { sim } = freshGame();
+  sim.state.cash = 2000;
+  const ok = sim.buyUpgrade('engine');
+  check('engine tune bought', ok && sim.state.upgrades.engine && sim.state.cash === 800);
+  const armor = sim.buyUpgrade('armor');
+  check('armor bought with exact cash', armor && sim.state.upgrades.armor && sim.state.cash === 0);
+  const nos = sim.buyUpgrade('nos');
+  check('NOS refused when broke', !nos && !sim.state.upgrades.nos);
 }
 
-// 9. Every screenshot scene stages without throwing, finale at night.
+// 11 — weapons: buying a pistol arms the player, shooting spends ammo.
 {
-  for (const name of ['chase', 'heli', 'roadblock', 'finale', 'start']) {
-    const sim = freshSim(7);
-    const screen = stageShot(name, sim);
-    const p = sim.state.player;
-    check(`stage shot ${name}`, screen === 'play' || screen === 'title', `screen ${screen}, player (${p.x.toFixed(0)}, ${p.z.toFixed(0)})`);
-    check(`shot ${name} finite`, Number.isFinite(p.x) && Number.isFinite(p.z), '');
-  }
-  const sim = freshSim(7);
-  stageShot('finale', sim);
-  check('finale is night', sim.state.clock > 0.85, `clock ${sim.state.clock.toFixed(2)}`);
-  check('finale wanted 4+', sim.state.wanted >= 4, `${sim.state.wanted} stars`);
-  check('finale has heli', sim.state.heli.active === true, '');
+  const { sim } = freshGame();
+  sim.state.cash = 2000;
+  check('pistol bought', sim.buyWeapon('pistol') && sim.state.weapons.owned.pistol);
+  check('pistol has 30 rounds', sim.state.weapons.ammo.pistol === 30);
+  const idle = { steer: 0, throttle: 0, run: false, nos: false, enter: false, exit: false, shoot: true, weaponSwitch: false, radio: false, garage: false, garageBuy: null, ammoBuy: null };
+  sim.step(STEP, idle);
+  check('shot spent a round', sim.state.weapons.ammo.pistol === 29, `${sim.state.weapons.ammo.pistol} left`);
+}
+
+// 12 — a 60-second free drive covers ground without a bust or a death.
+{
+  const { sim, missions } = freshGame();
+  driveFor(sim, missions, 60);
+  check('60s drive survives', !sim.state.busted && !sim.state.dead);
+  check('60s drive covers ground', sim.state.stats.distanceDriven > 100, `${Math.round(sim.state.stats.distanceDriven)} m`);
+}
+
+// 13 — the finale scene stages five stars, a helicopter and a roadblock.
+{
+  const { sim, missions } = freshGame();
+  stageShot('finale', sim, missions);
+  check('finale has 5 stars', sim.wantedStars() === 5, `${sim.wantedStars()} stars`);
+  check('finale heli overhead', sim.state.heli.active);
+  check('finale roadblock up', sim.state.roadblocks.length >= 1);
+  check('finale is night', sim.state.clockMinutes >= 1320);
+}
+
+// 14 — the chase scene stages a daylight pursuit.
+{
+  const { sim, missions } = freshGame();
+  stageShot('chase', sim, missions);
+  check('chase has 3 stars', sim.wantedStars() === 3, `${sim.wantedStars()} stars`);
+  check('chase is daytime', sim.state.clockMinutes >= 900 && sim.state.clockMinutes < 1020);
+  check('chase has police', sim.state.police.length >= 2);
+  check('chase is driving', !!sim.state.car && Math.abs(sim.state.car.speed) > 5, `${sim.state.car ? sim.state.car.speed.toFixed(1) : 0} m/s`);
+}
+
+// 15 — the clock advances and daylight follows it.
+{
+  const { sim } = freshGame();
+  const idle = { steer: 0, throttle: 0, run: false, nos: false, enter: false, exit: false, shoot: false, weaponSwitch: false, radio: false, garage: false, garageBuy: null, ammoBuy: null };
+  const start = sim.state.clockMinutes;
+  for (let i = 0; i < 120; i += 1) sim.step(STEP, idle);
+  check('clock advances', sim.state.clockMinutes > start, `${start} -> ${sim.state.clockMinutes}`);
+  check('daylight at dusk', sim.daylight() > 0 && sim.daylight() < 1, sim.daylight().toFixed(2));
 }
 
 console.log(`\nAll ${passed} checks passed.`);

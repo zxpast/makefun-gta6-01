@@ -1,50 +1,49 @@
-// Saving between visits: one small JSON blob in localStorage — the cash,
-// which chapters are done, which chapter is current, the garage and the
-// ammo. Loading is forgiving: a missing, broken or private-mode store
-// just starts a new game. Nothing here knows about the simulation; the
-// caller hands it plain numbers.
+// Solano Heat — saves between visits: cash, garage, weapons, completed
+// chapters and the player's last spot. Kept small and versioned; a save from
+// an older version is ignored, never trusted.
 import { SAVE_KEY } from './config.js';
 
-export function readSave() {
+export function saveGame(sim, missions) {
+  try {
+    const s = sim.state;
+    const data = {
+      version: 5,
+      cash: s.cash,
+      upgrades: s.upgrades,
+      weapons: s.weapons,
+      completed: missions.state.completed,
+      chapterIndex: missions.state.chapterIndex,
+      player: { x: s.player.x, z: s.player.z },
+    };
+    window.localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function loadGame() {
   try {
     const raw = window.localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
     const data = JSON.parse(raw);
-    if (typeof data !== 'object' || data === null) return null;
-    return {
-      cash: Number.isFinite(data.cash) ? data.cash : 0,
-      chapter: Number.isInteger(data.chapter) ? data.chapter : 0,
-      completed: Array.isArray(data.completed) ? data.completed : [],
-      garage: typeof data.garage === 'object' && data.garage !== null ? data.garage : null,
-      ammo: typeof data.ammo === 'object' && data.ammo !== null ? data.ammo : null,
-      bestCash: Number.isFinite(data.bestCash) ? data.bestCash : 0,
-    };
+    if (!data || data.version !== 5) return null;
+    return data;
   } catch {
     return null;
   }
 }
 
-export function writeSave(save) {
-  try {
-    window.localStorage.setItem(SAVE_KEY, JSON.stringify({
-      cash: save.cash,
-      chapter: save.chapter,
-      completed: save.completed,
-      garage: save.garage,
-      ammo: save.ammo,
-      bestCash: save.bestCash,
-    }));
-    return true;
-  } catch {
-    // Private windows and full stores just mean the save lasts this visit.
-    return false;
-  }
-}
-
-export function clearSave() {
-  try {
-    window.localStorage.removeItem(SAVE_KEY);
-  } catch {
-    // Nothing to do: the store is already unreachable.
+export function applySave(sim, missions, data) {
+  if (!data) return;
+  const s = sim.state;
+  s.cash = data.cash ?? s.cash;
+  Object.assign(s.upgrades, data.upgrades ?? {});
+  Object.assign(s.weapons, data.weapons ?? {});
+  missions.state.completed = data.completed ?? [];
+  missions.state.chapterIndex = data.chapterIndex ?? 0;
+  if (data.player) {
+    s.player.x = data.player.x;
+    s.player.z = data.player.z;
   }
 }
