@@ -1,139 +1,98 @@
-// The 2D overlay: cash, wanted stars, speed, clock, the current objective, the
-// minimap, and the radio. Drawn on a canvas laid over the 3D view, with no DOM.
-import { WORLD } from './config.js';
+// Solano Heat — HUD and minimap. DOM readouts for wanted level, cash, respect,
+// district, objective and speed, plus a live canvas minimap that labels all
+// sixteen districts and tracks the player, police, missions and shops.
+import { DISTRICTS, CITY_HALF, starLabel } from './sim.js';
 
-const MINIMAP = 150;
-
-export function createHud(canvas, sim, missions, radio) {
-  const ctx = canvas.getContext('2d');
-
-  function resize() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+export class Hud {
+  constructor() {
+    this.el = (id) => document.getElementById(id);
+    this.map = this.el('minimap');
+    this.mapCtx = this.map ? this.map.getContext('2d') : null;
+    this.menuInner = this.el('menu') ? this.el('menu').firstElementChild : null;
+    this.lastBanner = '';
   }
-  resize();
-  window.addEventListener('resize', resize);
-
-  function star(x, y, r, filled, color) {
-    ctx.beginPath();
-    for (let i = 0; i < 10; i += 1) {
-      const angle = (i * Math.PI) / 5 - Math.PI / 2;
-      const rr = i % 2 === 0 ? r : r * 0.45;
-      const px = x + Math.cos(angle) * rr;
-      const py = y + Math.sin(angle) * rr;
-      if (i === 0) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
-    }
-    ctx.closePath();
-    ctx.fillStyle = filled ? color : 'rgba(255,255,255,0.25)';
-    ctx.fill();
+  setText(id, value) {
+    const e = this.el(id);
+    if (e && e.textContent !== String(value)) e.textContent = value;
   }
-
-  function drawMinimap() {
-    const w = canvas.width;
-    const size = MINIMAP;
-    const ox = w - size - 16;
-    const oy = 16;
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect(ox, oy, size, size);
-    const sx = (x) => ox + ((x + WORLD.width / 2) / WORLD.width) * size;
-    const sy = (z) => oy + ((z + WORLD.depth / 2) / WORLD.depth) * size;
-    ctx.fillStyle = '#3a3f46';
-    for (const x of sim.city.roadsX) ctx.fillRect(sx(x) - 1, oy, 2, size);
-    for (const z of sim.city.roadsZ) ctx.fillRect(ox, sy(z) - 1, size, 2);
-    const target = missions.target();
-    if (target !== null) {
-      ctx.fillStyle = '#22d3ee';
-      ctx.beginPath();
-      ctx.arc(sx(target.x), sy(target.z), 5, 0, Math.PI * 2);
-      ctx.fill();
+  update(view) {
+    this.setText('stars', starLabel(view.wanted));
+    this.setText('cash', '$' + Math.round(view.cash).toLocaleString('en-US'));
+    this.setText('respect', '◆ ' + view.respect + ' ' + view.rank);
+    this.setText('district', view.district || 'Solano Bay');
+    this.setText('objective', view.objective);
+    this.setText('speed', Math.round(view.speedKmh) + ' km/h');
+    this.setText('radio', view.radio);
+    this.setText('prompt', view.prompt || '');
+    this.setText('dayline', view.dayline);
+    const nos = this.el('nosfill');
+    if (nos) nos.style.width = Math.round(view.nos) + '%';
+    const dmg = this.el('dmgfill');
+    if (dmg) dmg.style.width = Math.round(view.damage) + '%';
+    if (view.banner && view.banner !== this.lastBanner) {
+      this.lastBanner = view.banner;
+      this.setText('banner', view.banner);
+      const b = this.el('banner');
+      if (b) { b.classList.remove('show'); void b.offsetWidth; b.classList.add('show'); }
     }
-    const p = sim.state.player;
-    ctx.fillStyle = '#fbbf24';
-    ctx.beginPath();
-    ctx.arc(sx(p.x), sy(p.z), 4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = '#fbbf24';
-    ctx.beginPath();
-    ctx.moveTo(sx(p.x), sy(p.z));
-    ctx.lineTo(sx(p.x) + Math.sin(p.angle) * 10, sy(p.z) + Math.cos(p.angle) * 10);
-    ctx.stroke();
-    ctx.fillStyle = '#ffffff';
-    ctx.font = '12px monospace';
-    ctx.fillText('MAP', ox + 6, oy + size - 6);
+    this.drawMinimap(view);
   }
-
-  function draw() {
-    const w = canvas.width;
-    const h = canvas.height;
-    ctx.clearRect(0, 0, w, h);
-    const s = sim.state;
-    const p = s.player;
-
-    // Cash and clock, top left.
-    ctx.font = 'bold 26px monospace';
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(`$${Math.floor(s.cash)}`, 18, 36);
-    ctx.font = '18px monospace';
-    const { hour, minute } = sim.hourMinute();
-    const clock = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-    ctx.fillText(clock, 18, 64);
-    ctx.fillText(`Chapter ${missions.completed.length + 1}/8`, 18, 90);
-    ctx.fillText(sim.city.districtAt(p.x, p.z), 18, 116);
-
-    // Wanted stars, top centre.
-    for (let i = 0; i < 5; i += 1) {
-      star(w / 2 - 66 + i * 30, 32, 12, i < s.wanted, '#f59e0b');
+  drawMinimap(view) {
+    if (!this.mapCtx) return;
+    // Redraw at most every 150ms: the minimap is the priciest HUD piece and
+    // it does not need to refresh every simulation step.
+    const now = performance.now();
+    if (now - (this.lastMap || 0) < 150) return;
+    this.lastMap = now;
+    const g = this.mapCtx, S = 168, k = S / (CITY_HALF * 2);
+    const px = (x) => (x + CITY_HALF) * k;
+    const pz = (z) => (z + CITY_HALF) * k;
+    g.clearRect(0, 0, S, S);
+    g.fillStyle = 'rgba(8,12,18,0.85)';
+    g.fillRect(0, 0, S, S);
+    g.strokeStyle = 'rgba(255,255,255,0.14)';
+    for (let v = -CITY_HALF; v <= CITY_HALF; v += 100) {
+      g.beginPath(); g.moveTo(px(v), 0); g.lineTo(px(v), S); g.stroke();
+      g.beginPath(); g.moveTo(0, pz(v)); g.lineTo(S, pz(v)); g.stroke();
     }
-
-    // Speed and radio, bottom right.
-    if (s.car !== null) {
-      ctx.font = 'bold 30px monospace';
-      ctx.fillStyle = '#ffffff';
-      ctx.fillText(`${Math.round(Math.abs(s.car.speed) * 3.6)} km/h`, w - 190, h - 58);
+    g.fillStyle = 'rgba(255,255,255,0.5)';
+    g.font = '7px system-ui, sans-serif';
+    g.textAlign = 'center';
+    for (const d of DISTRICTS) {
+      const cx = px(d.gx * 300 - CITY_HALF + 150), cz = pz(d.gz * 300 - CITY_HALF + 150);
+      const short = d.name.replace(/^The /, '').split(' ')[0].toUpperCase();
+      g.fillText(short, cx, cz);
     }
-    ctx.font = '16px monospace';
-    ctx.fillStyle = '#e2e8f0';
-    ctx.fillText(radio.label(), w - 190, h - 30);
-    if (s.car !== null && s.car.nos > 0) {
-      ctx.fillStyle = '#22d3ee';
-      ctx.fillText(`NOS ${Math.round(s.car.nos * 100)}%`, w - 190, h - 86);
-    }
-
-    // Objective and message, bottom left.
-    ctx.font = '16px monospace';
-    ctx.fillStyle = '#fbbf24';
-    ctx.fillText(`> ${missions.objective()}`, 18, h - 58);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(missions.message, 18, h - 30);
-
-    // Context prompts.
-    if (p.onFoot && sim.city.parked.length > 0) {
-      const nearest = sim.city.parked[0];
-      if (Math.hypot(nearest.x - p.x, nearest.z - p.z) < 6) {
-        ctx.fillStyle = '#fbbf24';
-        ctx.font = 'bold 18px monospace';
-        ctx.fillText('Press E to steal the car', w / 2 - 110, h / 2 + 60);
-      }
-    }
-    if (s.car !== null && sim.nearPlace('garage', 12)) {
-      ctx.fillStyle = '#fbbf24';
-      ctx.font = 'bold 18px monospace';
-      ctx.fillText('GARAGE: 1 Armor  2 Engine  3 NOS  |  Q weapons', w / 2 - 210, h / 2 + 60);
-    }
-    if (missions.failed) {
-      ctx.fillStyle = '#ef4444';
-      ctx.font = 'bold 22px monospace';
-      ctx.fillText('MISSION FAILED — press M to retry', w / 2 - 200, h / 2 - 40);
-    }
-    if (missions.completed.length >= 8) {
-      ctx.fillStyle = '#22c55e';
-      ctx.font = 'bold 22px monospace';
-      ctx.fillText('ALL CHAPTERS COMPLETE — Solano is yours.', w / 2 - 240, h / 2 - 40);
-    }
-
-    drawMinimap();
+    const dot = (x, z, color, r) => {
+      g.fillStyle = color;
+      g.beginPath(); g.arc(px(x), pz(z), r, 0, Math.PI * 2); g.fill();
+    };
+    if (view.target) dot(view.target.x, view.target.z, '#f5c542', 5);
+    for (const s of view.shops || []) dot(s.x, s.z, '#4fc3f7', 3);
+    for (const h of view.houses || []) dot(h.x, h.z, '#7ee787', 3);
+    for (const p of view.police || []) dot(p.x, p.z, '#ff4444', 3);
+    // Player arrow.
+    g.save();
+    g.translate(px(view.px), pz(view.pz));
+    g.rotate(view.heading);
+    g.fillStyle = '#ffffff';
+    g.beginPath(); g.moveTo(0, -6); g.lineTo(4, 5); g.lineTo(-4, 5); g.closePath(); g.fill();
+    g.restore();
   }
-
-  return { draw };
+  showMenu(html) {
+    const m = this.el('menu');
+    if (!m) return;
+    if (this.menuInner) this.menuInner.innerHTML = html;
+    m.classList.add('open');
+  }
+  hideMenu() {
+    const m = this.el('menu');
+    if (m) { m.classList.remove('open'); if (this.menuInner) this.menuInner.innerHTML = ''; }
+  }
+  showToast(text) {
+    const t = this.el('toast');
+    if (!t) return;
+    t.textContent = text;
+    t.classList.remove('show'); void t.offsetWidth; t.classList.add('show');
+  }
 }

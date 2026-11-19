@@ -1,30 +1,51 @@
-// Solano Heat — the dossier builder. Run it from anywhere:
-//   MAKEFUN_OUTPUT_DIR=/output node main.ts
-// It reads game/ and screenshots/ from the entry root (this file's directory,
-// or MAKEFUN_BOT_DIR when the grader sets it) and writes dossier.json to
-// MAKEFUN_OUTPUT_DIR, byte-identical on every run.
-import { writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+// Solano Heat — the entry program for make.fun gta6-01.
+//
+// It hands the game in: copies this repository's game/ and screenshots/ into
+// the output directory and writes dossier.json there with the kit's vendored
+// buildDossier library. game/ and screenshots/ are always read from beside
+// this file, never from the output directory, so the program works the same
+// when the grader runs it with an empty output directory.
+//
+// Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
+//   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
+
+import { cpSync, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
-// The entry root is where this file lives, so game/ and screenshots/ are found
-// even when the output directory is a separate empty directory, as in the
-// grader (MAKEFUN_BOT_DIR=/bot, MAKEFUN_OUTPUT_DIR=/output). The bot directory
-// wins when the grader sets it; otherwise this file's own directory is the root.
-const entryDir = process.env.MAKEFUN_BOT_DIR ?? dirname(fileURLToPath(import.meta.url));
+const here = fileURLToPath(new URL('.', import.meta.url));
+const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+const gameDir = join(here, 'game');
+const shotsDir = join(here, 'screenshots');
 
-const outDir = process.env.MAKEFUN_OUTPUT_DIR ?? entryDir;
-const dossier = buildDossier(entryDir, {
+if (!existsSync(join(gameDir, 'index.html'))) {
+  process.stderr.write('solano heat: game/index.html is missing next to main.ts\n');
+  process.exit(2);
+}
+
+mkdirSync(out, { recursive: true });
+// When the output directory IS this repository (MAKEFUN_OUTPUT_DIR=.),
+// the game and screenshots are already in place — copying them onto
+// themselves is an error, so skip the copy and just write the dossier.
+if (resolve(out) !== resolve(here)) {
+  cpSync(gameDir, join(out, 'game'), { recursive: true });
+  mkdirSync(join(out, 'screenshots'), { recursive: true });
+  if (existsSync(shotsDir)) cpSync(shotsDir, join(out, 'screenshots'), { recursive: true });
+}
+
+// The scorer's caps, from the competition kit: at most 4 screenshots of at
+// most 256 KiB, at most 993 files and 48 MiB under game/, and a dossier text
+// cap of 160 KiB. The gate rebuilds the dossier with the same library and
+// compares the two byte for byte, so these numbers must stay as the kit has
+// them.
+const dossier = buildDossier(out, {
   text_max_bytes: 163840,
   screenshots: { max: 4, max_bytes: 262144 },
   game_max_files: 993,
   game_max_bytes: 50331648,
   game_path_max_bytes: 1000,
 });
-writeFileSync(join(outDir, 'dossier.json'), dossier);
-console.log(`dossier.json written to ${join(outDir, 'dossier.json')}: ${dossier.length} bytes`);
-// Dossier stats for the build log: text length and image count, so a too-long
-// write-up or a missing screenshot is visible before the submit, not after it.
-const parsed = JSON.parse(new TextDecoder().decode(dossier));
-console.log(`dossier text: ${parsed.text.length} chars, images: ${parsed.images.length}`);
+writeFileSync(join(out, 'dossier.json'), dossier);
+const bytes = statSync(join(out, 'dossier.json')).size;
+process.stdout.write(`solano heat: wrote ${join(out, 'dossier.json')} (${bytes} bytes)\n`);
