@@ -4,83 +4,79 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:,">
-<title>Solano Heat — GTA VI Fan Game</title>
+<title>Solano Heat — a chase across Solano Bay</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { width: 100%; height: 100%; overflow: hidden; background: #05070c; }
-  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #f2f2f2; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0d1420; font-family: "Segoe UI", system-ui, sans-serif; color: #f2f2f2; }
   #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
-  .hud { position: fixed; pointer-events: none; z-index: 5; text-shadow: 0 1px 3px rgba(0,0,0,.9); }
-  #topleft { top: 14px; left: 16px; }
-  #stars { font-size: 30px; letter-spacing: 3px; color: #ffd94a; line-height: 1; }
-  #cash { font-size: 26px; font-weight: 800; color: #7ee787; margin-top: 4px; }
-  #respect { font-size: 14px; font-weight: 700; color: #ffd94a; margin-top: 2px; }
-  #district { font-size: 13px; color: #cdd6e4; margin-top: 2px; }
-  #topcenter { top: 12px; left: 50%; transform: translateX(-50%); text-align: center; width: min(560px, 60vw); }
-  #dayline { font-size: 12px; letter-spacing: 2px; color: #ffb3c1; font-weight: 700; }
-  #objective { font-size: 17px; font-weight: 700; margin-top: 3px; }
-  #banner { font-size: 21px; font-weight: 900; color: #ffd94a; margin-top: 6px; opacity: 0; transition: opacity .3s; will-change: opacity; }
-  #banner.show { opacity: 1; }
-  @keyframes pop { 0% { opacity: 0; transform: scale(.85); } 12% { opacity: 1; transform: scale(1); } 80% { opacity: 1; } 100% { opacity: 0; } }
-  #bottomright { right: 16px; bottom: 16px; text-align: right; }
-  #speed { font-size: 34px; font-weight: 900; }
-  #radio { font-size: 12px; color: #cdd6e4; }
-  .bar { width: 150px; height: 8px; background: rgba(255,255,255,.18); border-radius: 4px; margin: 4px 0 0 auto; overflow: hidden; }
-  .bar > div { height: 100%; }
-  #nosfill { background: #4fc3f7; width: 100%; }
-  #dmgfill { background: #ff5a5a; width: 0%; }
-  .barlabel { font-size: 10px; letter-spacing: 2px; color: #cdd6e4; }
-  #bottomleft { left: 16px; bottom: 16px; }
-  #prompt { font-size: 14px; font-weight: 700; color: #ffd94a; }
-  #minimap { position: fixed; right: 16px; top: 14px; width: 168px; height: 168px; border: 2px solid rgba(255,255,255,.35); border-radius: 8px; z-index: 5; background: rgba(8,12,18,.7); }
-  #toast { position: fixed; left: 50%; bottom: 110px; transform: translateX(-50%); background: rgba(0,0,0,.75); padding: 8px 16px; border-radius: 20px; font-size: 14px; font-weight: 700; z-index: 6; opacity: 0; pointer-events: none; }
-  #toast.show { animation: pop 2.6s ease forwards; }
-  #menu { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(4,6,12,.72); z-index: 10; }
-  #menu.open { display: flex; }
-  #menu > div { width: min(620px, 92vw); max-height: 92vh; overflow-y: auto; background: #0d1320; border: 1px solid #2a3550; border-radius: 12px; padding: 26px 30px; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
-  #menu h1 { font-size: 30px; letter-spacing: 2px; color: #ffd94a; margin-bottom: 6px; }
-  #menu .tag { color: #ffb3c1; font-weight: 700; margin-bottom: 10px; }
-  #menu p { font-size: 14px; line-height: 1.5; color: #d7deea; margin-bottom: 10px; }
-  #menu .keys { font-size: 12px; color: #9aa7bd; }
-  #menu button { display: block; width: 100%; margin: 8px 0; padding: 12px; font-size: 15px; font-weight: 800; letter-spacing: 1px; color: #0d1320; background: #ffd94a; border: 0; border-radius: 8px; cursor: pointer; }
-  #menu button:hover { background: #ffe27a; }
-  .mrow { padding: 9px 12px; border: 1px solid #26314a; border-radius: 8px; margin: 6px 0; cursor: pointer; }
-  .mrow.sel { border-color: #ffd94a; background: rgba(255,217,74,.12); }
-  .mrow.done { opacity: .55; }
-  .mrow b { display: block; font-size: 14px; }
-  .mrow span { font-size: 12px; color: #ffd94a; font-weight: 700; }
-  .mrow i { display: block; font-size: 12px; color: #9aa7bd; font-style: normal; margin-top: 2px; }
-  .mrow em { font-size: 12px; color: #7ee787; font-style: normal; }
+  .hidden { display: none !important; }
+  #topbar { position: fixed; top: 14px; left: 16px; right: 16px; display: flex; gap: 18px; align-items: baseline; font-size: 15px; text-shadow: 0 1px 3px #000; pointer-events: none; z-index: 5; }
+  #stars { font-size: 22px; letter-spacing: 2px; }
+  #cash { font-weight: 700; color: #7dff6a; }
+  #respect { color: #ffd24d; }
+  #day { margin-left: auto; color: #ffb37a; font-weight: 600; }
+  #objective { position: fixed; top: 52px; left: 16px; max-width: 460px; font-size: 14px; line-height: 1.45; text-shadow: 0 1px 3px #000; z-index: 5; pointer-events: none; }
+  #objective b { color: #ffd24d; }
+  #timer { color: #4dd0ff; }
+  #district { position: fixed; top: 52px; right: 16px; font-size: 15px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; text-shadow: 0 1px 3px #000; z-index: 5; }
+  #speedo { position: fixed; right: 18px; bottom: 18px; text-align: right; font-size: 26px; font-weight: 700; text-shadow: 0 2px 4px #000; z-index: 5; pointer-events: none; }
+  #speedo small { display: block; font-size: 12px; color: #4dd0ff; font-weight: 600; }
+  #minimap { position: fixed; left: 16px; bottom: 16px; width: 220px; height: 220px; border: 2px solid rgba(255,255,255,.35); border-radius: 6px; background: #10141a; z-index: 5; }
+  #toast { position: fixed; top: 34%; left: 50%; transform: translateX(-50%); padding: 10px 22px; background: rgba(10,14,20,.85); border: 1px solid #ffd24d; border-radius: 6px; font-size: 17px; font-weight: 600; opacity: 0; transition: opacity .25s; z-index: 8; pointer-events: none; text-align: center; }
+  #toast.show { opacity: 1; }
+  #menu { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 520px; max-width: 92vw; background: rgba(10,14,20,.94); border: 1px solid #4dd0ff; border-radius: 8px; padding: 16px 20px; z-index: 9; display: none; }
+  #menu.show { display: block; }
+  #menu div { padding: 6px 8px; font-size: 15px; border-radius: 4px; }
+  #menu div.sel { background: #ffd24d; color: #111; font-weight: 700; }
+  #shop { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 420px; max-width: 92vw; background: rgba(10,14,20,.94); border: 1px solid #7dff6a; border-radius: 8px; padding: 16px 20px; z-index: 9; }
+  #shop h2 { margin-bottom: 10px; color: #7dff6a; }
+  #shop div { padding: 5px 0; font-size: 15px; }
+  #floats { position: fixed; left: 50%; top: 44%; transform: translateX(-50%); z-index: 7; pointer-events: none; }
+  .float-text { position: absolute; left: 0; top: 0; font-size: 22px; font-weight: 800; text-shadow: 0 2px 4px #000; animation: rise 1.4s ease-out forwards; white-space: nowrap; }
+  .float-text.cash { color: #7dff6a; }
+  .float-text.respect { color: #ffd24d; }
+  @keyframes rise { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(-60px); } }
+  #help { position: fixed; bottom: 16px; left: 252px; font-size: 12px; color: rgba(255,255,255,.65); text-shadow: 0 1px 2px #000; z-index: 5; pointer-events: none; }
+  #title, #done { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: linear-gradient(180deg, rgba(13,20,32,.55), rgba(13,20,32,.92)); z-index: 10; text-align: center; }
+  #title h1 { font-size: 64px; letter-spacing: 6px; color: #ffd24d; text-shadow: 0 4px 18px #000; }
+  #title h2 { font-size: 20px; font-weight: 400; color: #ffb37a; margin: 8px 0 22px; }
+  #title p { max-width: 560px; font-size: 15px; line-height: 1.6; color: #e8e8e8; }
+  #title .enter { margin-top: 28px; font-size: 19px; font-weight: 700; color: #7dff6a; animation: blink 1.2s infinite; }
+  @keyframes blink { 50% { opacity: .35; } }
+  #done h1 { font-size: 52px; color: #7dff6a; text-shadow: 0 4px 18px #000; }
+  #done p { margin-top: 12px; font-size: 17px; color: #e8e8e8; }
 </style>
-</head>
-<body>
-<canvas id="game"></canvas>
-<canvas id="minimap" width="168" height="168"></canvas>
-<div class="hud" id="topleft">
-  <div id="stars">☆☆☆☆☆</div>
-  <div id="cash">$500</div>
-  <div id="respect">◆ 0 STREET</div>
-  <div id="district">Solano Bay</div>
-</div>
-<div class="hud" id="topcenter">
-  <div id="dayline">SOLANO BAY — 7 DAYS TO THE NIGHT JOB</div>
-  <div id="objective">Welcome to Solano Bay.</div>
-  <div id="banner"></div>
-</div>
-<div class="hud" id="bottomright">
-  <div id="speed">0 km/h</div>
-  <div id="radio">Radio off (R)</div>
-  <div class="barlabel">NOS — SHIFT</div>
-  <div class="bar"><div id="nosfill"></div></div>
-  <div class="barlabel">DAMAGE</div>
-  <div class="bar"><div id="dmgfill"></div></div>
-</div>
-<div class="hud" id="bottomleft"><div id="prompt"></div></div>
-<div id="toast"></div>
-<div id="menu"><div></div></div>
 <script type="importmap">
 { "imports": { "three": "./vendor/three/three.module.min.js" } }
 </script>
-<script type="module" src="./src/main.js"></script>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="topbar">
+  <span id="stars">☆☆☆☆☆</span>
+  <span id="cash">$500</span>
+  <span id="respect">0 Rookie</span>
+  <span id="day">DAY 1 / 7 — 6 LEFT</span>
+</div>
+<div id="objective"><b>Solano Heat</b><br><span id="objective-text">Press ENTER to start.</span><br><span id="timer"></span> <span id="distance"></span></div>
+<div id="district">Aldergate</div>
+<div id="speedo"><span id="speed">0 km/h</span><small id="nos"></small><small id="radio">SOL 98.5 — Synthwave</small></div>
+<canvas id="minimap" width="220" height="220"></canvas>
+<div id="toast"></div>
+<div id="menu"></div>
+<div id="shop" class="hidden"></div>
+<div id="floats"></div>
+<div id="help">WASD drive · E enter/exit · M jobs · T side job · F punch · J / click shoot · 1-3 weapons · R radio · Shift NOS · G garage</div>
+<div id="title">
+  <h1>SOLANO HEAT</h1>
+  <h2>Seven days. Twelve jobs. One vault.</h2>
+  <p>Rook is back in Solano Bay with a plan and a debt. Mara runs the garage, Deke runs the races, Pip runs the wires. The Tidehouse vault opens on day seven — and the whole city will be between Rook and it. Drive, earn respect, lose the law, and do not get busted.</p>
+  <div class="enter">PRESS ENTER TO START</div>
+</div>
+<div id="done" class="hidden">
+  <h1>THE TIDEHOUSE JOB — DONE</h1>
+  <p>Rook walks out of the vault with the whole bay behind him. Solano Bay is his now.</p>
+</div>
+<script type="module" src="./src/boot.js"></script>
 </body>
 </html>

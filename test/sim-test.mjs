@@ -1,171 +1,96 @@
-// Solano Heat — tests for the pure logic core (game/src/sim.js).
-// Plain node, no browser needed: node --test test/sim-test.mjs
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
+// Solano Heat sim tests. Plain node, no framework: every check prints PASS
+// or FAIL and the process exits non-zero on the first failure, so a red run
+// is impossible to miss. Run: node test/sim-test.mjs
+
 import {
-  DISTRICTS, MISSIONS, WEAPONS, SHOPS, SAFEHOUSES,
-  districtAt, missionById, nextMissionId, daysLeft,
-  wantedAfterCrime, decayWanted, policeCount, heliActive, roadblockActive,
-  respectForMission, cashForMission, stuntRespect, completeMission,
-  upgradeCost, upgradeEffect, buyUpgrade, buyWeapon, createState,
-  serializeSave, parseSave, missionTarget, objectiveText, starLabel,
-  mulberry32, hashStr,
+  MISSIONS, SIDE_JOBS, missionById, missionsOnDay, rewardFor, respectRank,
+  garagePrice, garageTopSpeed, garageArmor, shopPrice, starsAfter,
+  policeUnits, heliActive, roadblockActive, chaseTopSpeed, starsAfterHiding,
+  headingError, steerFor, stoppingDistance, targetPoint, districtNameAt,
+  blankSave, validSave, DAYS, MAX_STARS,
 } from '../game/src/sim.js';
+import { DISTRICTS, buildCity, hitsBuilding, hasLineOfSight, routeBetween } from '../game/src/city.js';
 
-test('the city is sixteen named districts, each one distinct', () => {
-  assert.equal(DISTRICTS.length, 16);
-  assert.equal(new Set(DISTRICTS.map(d => d.name)).size, 16);
-  for (const d of DISTRICTS) {
-    assert.ok(d.name.length > 3);
-    assert.ok(d.flavor.length > 3);
+let passed = 0;
+
+function check(name, ok) {
+  if (!ok) {
+    console.error('FAIL', name);
+    process.exit(1);
   }
-});
+  passed += 1;
+  console.log('PASS', name);
+}
 
-test('district lookup finds corners, centre, and nothing outside', () => {
-  const corners = [
-    [-590, -590, 'Port Solano'],
-    [590, -590, 'North Point'],
-    [-590, 590, 'Little Havana'],
-    [590, 590, 'South Docks'],
-    [0, 0, 'Civic Center'],
-  ];
-  for (const [x, z, name] of corners) assert.equal(districtAt(x, z).name, name);
-  assert.equal(districtAt(9999, 0), null);
-});
+function near(a, b, eps = 1e-9) {
+  return Math.abs(a - b) < eps;
+}
 
-test('the story is twelve missions across seven days', () => {
-  assert.equal(MISSIONS.length, 12);
-  assert.deepEqual(MISSIONS.map(m => m.id), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
-  assert.equal(Math.max(...MISSIONS.map(m => m.day)), 7);
-  const finale = missionById(12);
-  assert.equal(finale.name, 'The Night Job');
-  assert.equal(finale.type, 'finale');
-});
+// Missions: twelve, saw-toothed, one finale, days 1-7.
+check('twelve missions', MISSIONS.length === 12);
+check('mission ids run 1..12', MISSIONS.every((m, i) => m.id === i + 1));
+check('finale is mission 12 on day 7', missionById(12).day === 7 && missionById(12).kind === 'finale');
+check('days span 1..7', Math.max(...MISSIONS.map((m) => m.day)) === DAYS);
+check('saw-tooth peaks then drops', MISSIONS[3].difficulty > MISSIONS[2].difficulty && MISSIONS[4].difficulty < MISSIONS[3].difficulty);
+check('two missions on day 1', missionsOnDay(1).length === 2);
+check('every mission has a target inside the grid', MISSIONS.every((m) => m.target.i >= 0 && m.target.i <= 8 && m.target.j >= 0 && m.target.j <= 8));
+check('every mission pays cash and respect', MISSIONS.every((m) => m.cash > 0 && m.respect > 0));
 
-test('saw-tooth pacing: hard peaks at 4, 8 and 12, easy valleys after', () => {
-  const byId = Object.fromEntries(MISSIONS.map(m => [m.id, m.difficulty]));
-  assert.ok(byId[4] > byId[3] && byId[4] > byId[5], 'mission 4 peaks above its neighbours');
-  assert.ok(byId[8] > byId[7] && byId[8] > byId[9], 'mission 8 peaks above its neighbours');
-  assert.equal(byId[12], Math.max(...MISSIONS.map(m => m.difficulty)));
-  assert.ok(byId[5] < byId[4] && byId[9] < byId[8], 'valleys drop after peaks');
-  assert.ok(byId[5] <= 3 && byId[9] <= 3, 'valleys stay gentle');
-});
+// Rewards: par time pays a fifth extra cash, respect never moves.
+check('par time pays +20% cash', rewardFor(missionById(1), 60).cash === 360);
+check('slow run pays base cash', rewardFor(missionById(1), 200).cash === 300);
+check('respect is time-blind', rewardFor(missionById(12), 10).respect === 225);
 
-test('the countdown to the Night Job ticks down with each mission', () => {
-  // Day 1 is six days out; the finale itself is day zero of the countdown.
-  assert.equal(daysLeft(1), 6);
-  assert.equal(daysLeft(12), 0);
-  assert.equal(daysLeft(8), 3);
-});
+// Respect ranks climb in order.
+check('respect rank rookie', respectRank(0) === 'Rookie');
+check('respect rank street', respectRank(150) === 'Street');
+check('respect rank legend', respectRank(1200) === 'Legend');
 
-test('wanted level clamps between zero and five stars', () => {
-  assert.equal(wantedAfterCrime(0, 'hitPed'), 2);
-  assert.equal(wantedAfterCrime(5, 'shoot'), 5);
-  assert.equal(wantedAfterCrime(0, 'speedTrap'), 0);
-  assert.equal(wantedAfterCrime(3, 'stealCar'), 4);
-});
+// Garage and shop prices.
+check('engine level 2 costs 1600', garagePrice('engine', 2) === 1600);
+check('paint is flat', garagePrice('paint', 3) === 150);
+check('unknown part costs 0', garagePrice('turbo', 1) === 0);
+check('engine level 3 tops 51', garageTopSpeed(3) === 51);
+check('armor level 2 shields 50', garageArmor(2) === 50);
+check('shotgun costs 800', shopPrice('shotgun') === 800);
 
-test('police strength scales with wanted; heli and roadblocks need 4+ stars', () => {
-  assert.deepEqual([0, 1, 2, 3, 4, 5].map(policeCount), [0, 1, 2, 3, 4, 5]);
-  assert.equal(heliActive(3), false);
-  assert.equal(heliActive(4), true);
-  assert.equal(roadblockActive(5), true);
-  assert.equal(roadblockActive(2), false);
-});
+// Wanted system: stars clamp, units scale, heli and roadblocks at 4+.
+check('steal adds a star', starsAfter('steal', 1) === 2);
+check('shoot adds two stars', starsAfter('shoot', 2) === 4);
+check('stars clamp at 5', starsAfter('shoot', 5) === 5);
+check('stars never go below 0', starsAfter('steal', 0) === 1);
+check('three stars field six units', policeUnits(3) === 6);
+check('heli sleeps below 4 stars', heliActive(3) === false && heliActive(4) === true);
+check('roadblocks start at 4 stars', roadblockActive(4) === true);
+check('chase speed grows with stars', chaseTopSpeed(5) === 45 && chaseTopSpeed(1) === 33);
 
-test('wanted only decays once the police lose sight of you', () => {
-  assert.equal(decayWanted(3, 12, true), 1);
-  assert.equal(decayWanted(3, 12, false), 3);
-  assert.equal(decayWanted(1, 5, true), 1);
-  assert.equal(decayWanted(0, 99, true), 0);
-});
+// Hiding: grace first, then one star per four quiet seconds.
+check('hiding keeps stars during grace', starsAfterHiding(4, 7) === 4);
+check('hiding drops a star at 12s', starsAfterHiding(4, 12) === 3);
+check('hiding clears at 24s', starsAfterHiding(4, 24) === 0);
 
-test('bonuses raise mission payouts; stunts pay fixed respect', () => {
-  const m = missionById(12);
-  assert.ok(respectForMission(m, {}) < respectForMission(m, { timeBonus: true, noDamage: true }));
-  assert.ok(cashForMission(m, { timeBonus: true }) > cashForMission(m, {}));
-  assert.equal(stuntRespect('nearMiss'), 3);
-  assert.equal(stuntRespect('takedown'), 8);
-});
+// Driving math: wrapped headings, clamped steering, braking distance.
+check('heading wraps past PI', near(headingError(Math.PI * 0.9, -Math.PI * 0.9), Math.PI * 0.2, 1e-6));
+check('steering clamps at 1', steerFor(3) === 1 && steerFor(-3) === -1);
+check('steering is proportional', near(steerFor(0.25), 0.55));
+check('braking distance grows with speed', stoppingDistance(40, 20) === 40 && stoppingDistance(20, 20) === 10);
 
-test('finishing jobs advances the story in order, never twice', () => {
-  const s = createState();
-  assert.equal(nextMissionId(s.completed), 1);
-  const gain = completeMission(s, 1, {});
-  assert.ok(gain && gain.cash > 0 && gain.respect > 0);
-  assert.equal(s.nextMission, 2);
-  assert.equal(completeMission(s, 1, {}), null, 'no double completion');
-  completeMission(s, 2, {});
-  completeMission(s, 3, {});
-  assert.equal(s.nextMission, 4);
-});
+// City: sixteen districts, buildings collide, routes run on the grid.
+check('sixteen districts', DISTRICTS.length === 16);
+check('district names are unique', new Set(DISTRICTS.map((d) => d.name)).size === 16);
+const city = buildCity(7);
+check('city builds hundreds of buildings', city.buildings.length > 100);
+check('a building blocks its own centre', hitsBuilding(city, city.buildings[0].x, city.buildings[0].z, 2) !== null);
+check('open road has no building', hitsBuilding(city, 0, -289, 2) === null);
+check('line of sight is open down a street', hasLineOfSight(city, -289, -289, 289, -289) === true);
+check('a route crosses the grid', routeBetween({ i: 0, j: 0 }, { i: 8, j: 8 }).length === 16);
+check('target point names its district', typeof targetPoint(missionById(1)).district === 'string');
+check('district lookup matches the grid', districtNameAt(-250, -250) === DISTRICTS[0].name);
 
-test('garage upgrades get pricier per level and stop at level 3', () => {
-  assert.ok(upgradeCost('engine', 1) < upgradeCost('engine', 2));
-  assert.ok(upgradeCost('engine', 2) < upgradeCost('engine', 3));
-  assert.ok(upgradeEffect('engine', 3) > upgradeEffect('engine', 1));
-  const rich = createState();
-  rich.cash = 100000;
-  assert.equal(buyUpgrade(rich, 'nos').level, 1);
-  assert.equal(buyUpgrade(rich, 'nos').level, 2);
-  assert.equal(buyUpgrade(rich, 'nos').level, 3);
-  assert.equal(buyUpgrade(rich, 'nos').ok, false);
-  assert.equal(buyUpgrade(createState(), 'engine').ok, false);
-});
+// Saves: blank is valid, broken ones are not.
+check('blank save is valid', validSave(blankSave()) === true);
+check('negative cash is invalid', validSave({ ...blankSave(), cash: -5 }) === false);
+check('mission 99 is invalid', validSave({ ...blankSave(), mission: 99 }) === false);
+check('six side jobs', SIDE_JOBS.length === 6);
 
-test('three weapons for sale; the pistol is owned from the start', () => {
-  assert.equal(WEAPONS.length, 3);
-  const s = createState();
-  assert.equal(s.weapons.pistol, true);
-  assert.equal(buyWeapon(s, 'pistol').ok, false);
-  s.cash = 5000;
-  assert.equal(buyWeapon(s, 'smg').ok, true);
-  assert.equal(s.ammo.smg, 30);
-});
-
-test('shops and safehouses sit inside real districts', () => {
-  assert.equal(SHOPS.length, 3);
-  assert.equal(SAFEHOUSES.length, 2);
-  assert.equal(new Set(SHOPS.map(s => s.kind)).size, 3);
-  for (const place of [...SHOPS, ...SAFEHOUSES]) {
-    assert.ok(districtAt(place.x, place.z), `${place.name} sits inside a district`);
-  }
-});
-
-test('saves survive a JSON round trip and junk is rejected', () => {
-  const s = createState();
-  s.cash = 1234;
-  s.respect = 77;
-  s.completed = [1, 2];
-  const back = parseSave(serializeSave(s));
-  assert.equal(back.cash, 1234);
-  assert.equal(back.respect, 77);
-  assert.deepEqual(back.completed, [1, 2]);
-  assert.equal(parseSave('not json'), null);
-  assert.equal(parseSave('{"version":9}'), null);
-});
-
-test('mission targets are deterministic, on intersections, inside the city', () => {
-  assert.deepEqual(missionTarget(7), missionTarget(7));
-  for (let id = 1; id <= 12; id++) {
-    const t = missionTarget(id);
-    assert.ok(Math.abs(t.x) <= 500 && Math.abs(t.z) <= 500);
-    assert.ok(t.x % 100 === 0, 'targets sit on road intersections');
-    assert.ok(t.z % 100 === 0, 'targets sit on road intersections');
-    assert.ok(t.district.length > 3);
-    assert.ok(objectiveText(missionById(id)).includes(t.district));
-  }
-});
-
-test('star labels always show five slots', () => {
-  assert.equal(starLabel(0), '☆☆☆☆☆');
-  assert.equal(starLabel(5), '★★★★★');
-  assert.equal(starLabel(3), '★★★☆☆');
-});
-
-test('the seeded RNG repeats itself and hashes differ per input', () => {
-  const first = mulberry32(99);
-  const second = mulberry32(99);
-  assert.equal(first(), second());
-  assert.notEqual(hashStr('a'), hashStr('b'));
-});
+console.log(`\n${passed} sim tests passed`);

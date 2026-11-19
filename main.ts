@@ -1,53 +1,54 @@
-// Solano Heat — the entry program for make.fun gta6-01.
+// Solano Heat — dossier builder. Copies the playable game and its four
+// screenshots into the output directory, then writes dossier.json with the
+// kit's own buildDossier. Run from the repository root:
 //
-// It hands the game in: copies this repository's game/ and screenshots/ into
-// the output directory and writes dossier.json there with the kit's vendored
-// buildDossier library. game/ and screenshots/ are always read from beside
-// this file, never from the output directory, so the program works the same
-// when the grader runs it with an empty output directory.
+//   MAKEFUN_OUTPUT_DIR=. node main.ts        (dossier in place)
+//   MAKEFUN_OUTPUT_DIR=out node main.ts      (dossier in out/)
 //
-// Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
-//   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
+// The output directory is the source of truth for the dossier: buildDossier
+// reads game/ and screenshots/ from the directory it is given, so the copy
+// happens first and the dossier second. When the output directory IS the
+// repository root the copy is skipped — the files are already there — and
+// the dossier is built in place. Either way the bytes are identical.
 
-import { cpSync, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
-const repoRoot = fileURLToPath(new URL('.', import.meta.url));
-const outDir = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
-const gameSrc = join(repoRoot, 'game');
-const shotsSrc = join(repoRoot, 'screenshots');
+const here = dirname(fileURLToPath(import.meta.url));
+const out = resolve(process.env.MAKEFUN_OUTPUT_DIR || 'out');
+const sameDir = out === resolve(here);
 
-if (!existsSync(join(gameSrc, 'index.html'))) {
-  process.stderr.write('solano heat: game/index.html is missing next to main.ts\n');
-  process.exit(2);
+if (!existsSync(join(here, 'game'))) {
+  throw new Error('no game/ directory beside main.ts — run from the repository root');
 }
 
-mkdirSync(outDir, { recursive: true });
-// When the output directory IS this repository (MAKEFUN_OUTPUT_DIR=.),
-// the game and screenshots are already in place — copying them onto
-// themselves is an error, so skip the copy and just write the dossier.
-const inPlace = resolve(outDir) === resolve(repoRoot);
-if (!inPlace) {
-  cpSync(gameSrc, join(outDir, 'game'), { recursive: true });
-  mkdirSync(join(outDir, 'screenshots'), { recursive: true });
-  if (existsSync(shotsSrc)) cpSync(shotsSrc, join(outDir, 'screenshots'), { recursive: true });
-}
-
-// The scorer's caps, from the competition kit: at most 4 screenshots of at
-// most 256 KiB, at most 993 files and 48 MiB under game/, and a dossier text
-// cap of 160 KiB. The gate rebuilds the dossier with the same library and
-// compares the two byte for byte, so these numbers must stay as the kit has
-// them — change nothing here without re-checking the kit's RULES.txt.
-const dossierText = buildDossier(outDir, {
+// The scorer's own caps: only text_max_bytes shapes the bytes; the rest
+// refuse an entry the scorer would refuse (more than 4 screenshots or one
+// over 256 KiB; more than 993 files in game/ or 48 MiB of game in total).
+const caps = {
   text_max_bytes: 163840,
   screenshots: { max: 4, max_bytes: 262144 },
   game_max_files: 993,
   game_max_bytes: 50331648,
   game_path_max_bytes: 1000,
-});
-const dossierPath = join(outDir, 'dossier.json');
-writeFileSync(dossierPath, dossierText);
-const dossierBytes = statSync(dossierPath).size;
-process.stdout.write(`solano heat: wrote ${dossierPath} (${dossierBytes} bytes)\n`);
+};
+
+if (!sameDir) {
+  mkdirSync(join(out, 'game'), { recursive: true });
+  cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
+  mkdirSync(join(out, 'screenshots'), { recursive: true });
+  if (existsSync(join(here, 'screenshots'))) {
+    cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
+  }
+}
+
+const dossier = buildDossier(out, caps);
+writeFileSync(join(out, 'dossier.json'), dossier);
+
+const parsed = JSON.parse(new TextDecoder('utf-8').decode(dossier));
+const textBytes = Buffer.byteLength(parsed.text || '', 'utf8');
+console.log(`dossier: ${dossier.length} bytes in ${out}`);
+console.log(`dossier text: ${textBytes} bytes (cap ${caps.text_max_bytes})`);
+console.log(`screenshots: ${Object.keys(parsed.images || {}).length}, cover: ${parsed.cover}`);

@@ -1,241 +1,157 @@
-// Solano Heat — the city of Solano Bay. A seeded procedural town: sixteen
-// named districts on a road grid, instanced towers, palms, lamps, a painted
-// road texture, and golden-hour, dusk and night lighting moods.
-import * as THREE from 'three';
-import { CITY_HALF, CELL, DISTRICTS, mulberry32 } from './sim.js';
+// Solano Bay: the city itself, as data. Streets run on a square grid, nine
+// intersections a side, and the sixteen districts sit on it in a four-by-four
+// board. Nothing here touches the renderer: it hands out positions, boxes
+// and names, and render.js turns them into meshes. The layout is seeded, so
+// the same seed always builds the same streets.
 
-export const ROAD_STEP = 100;
+import { makeRng, range, rangeInt, pick } from './rng.js';
 
-function paintGround() {
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 1024;
-  const g = canvas.getContext('2d');
-  g.fillStyle = '#3d3d44';
-  g.fillRect(0, 0, 1024, 1024);
-  const toPx = (v) => ((v + CITY_HALF) / (CITY_HALF * 2)) * 1024;
-  // A faint wash over each district so the map reads as neighbourhoods.
-  for (const d of DISTRICTS) {
-    const x0 = toPx(d.gx * CELL - CITY_HALF);
-    const z0 = toPx(d.gz * CELL - CITY_HALF);
-    g.fillStyle = 'rgba(255,255,255,0.045)';
-    g.fillRect(x0, z0, (CELL / 1200) * 1024, (CELL / 1200) * 1024);
-  }
-  // City blocks.
-  g.fillStyle = '#4c4c55';
-  for (let x = -CITY_HALF; x < CITY_HALF; x += ROAD_STEP) {
-    for (let z = -CITY_HALF; z < CITY_HALF; z += ROAD_STEP) {
-      g.fillRect(toPx(x + 8), toPx(z + 8), ((ROAD_STEP - 16) / 1200) * 1024, ((ROAD_STEP - 16) / 1200) * 1024);
-    }
-  }
-  // Dashed centre lines down every road.
-  g.fillStyle = '#d8c25a';
-  for (let v = -CITY_HALF; v <= CITY_HALF; v += ROAD_STEP) {
-    for (let t = -CITY_HALF; t < CITY_HALF; t += 24) {
-      g.fillRect(toPx(v) - 1, toPx(t), 2, 10);
-      g.fillRect(toPx(t), toPx(v) - 1, 10, 2);
-    }
-  }
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.anisotropy = 4;
-  return tex;
+export const BLOCK = 60;
+export const ROAD = 14;
+export const PITCH = BLOCK + ROAD;
+export const BLOCKS = 8;
+export const HALF = (BLOCKS * PITCH) / 2;
+
+export const DISTRICTS = [
+  { name: 'Aldergate', tint: 0x8a6f4d, low: 14, high: 34 },
+  { name: 'Breakwater', tint: 0x4d7a8a, low: 10, high: 26 },
+  { name: 'Cinder Wharf', tint: 0x7a5a4d, low: 12, high: 30 },
+  { name: 'Driftwood', tint: 0x6f8a5a, low: 8, high: 22 },
+  { name: 'Ember Row', tint: 0x8a4d3d, low: 16, high: 40 },
+  { name: 'Fairmont', tint: 0x9a8a6a, low: 18, high: 46 },
+  { name: 'Gullwing', tint: 0x5a7a9a, low: 12, high: 28 },
+  { name: 'Harbor Steps', tint: 0x4d6a7a, low: 10, high: 24 },
+  { name: 'Ironmarket', tint: 0x6a6a6a, low: 14, high: 38 },
+  { name: 'Jubilee', tint: 0x8a7a3d, low: 12, high: 32 },
+  { name: 'Keystone', tint: 0x7a6a8a, low: 20, high: 52 },
+  { name: 'Lantern Row', tint: 0x9a5a5a, low: 10, high: 26 },
+  { name: 'Mainsail', tint: 0x3d7a6a, low: 12, high: 30 },
+  { name: 'Northbank', tint: 0x5a5a7a, low: 16, high: 44 },
+  { name: 'Orchid Row', tint: 0x8a5a7a, low: 10, high: 24 },
+  { name: 'Pelican Court', tint: 0x6a8a7a, low: 14, high: 36 },
+];
+
+// Intersection (i, j) in world units. i and j run 0..8, streets included.
+export function intersection(i, j) {
+  return { x: -HALF + i * PITCH + ROAD / 2, z: -HALF + j * PITCH + ROAD / 2 };
 }
 
-function districtPlate(text) {
-  const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 128;
-  const g = canvas.getContext('2d');
-  g.fillStyle = 'rgba(10,14,20,0.72)';
-  g.beginPath();
-  g.roundRect(6, 18, 500, 92, 18);
-  g.fill();
-  g.strokeStyle = '#f5c542';
-  g.lineWidth = 4;
-  g.stroke();
-  g.fillStyle = '#ffffff';
-  g.font = 'bold 44px system-ui, sans-serif';
-  g.textAlign = 'center';
-  g.textBaseline = 'middle';
-  g.fillText(text.toUpperCase(), 256, 66);
-  const tex = new THREE.CanvasTexture(canvas);
-  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
-  const sprite = new THREE.Sprite(mat);
-  sprite.scale.set(60, 15, 1);
-  return sprite;
+export function nearestIntersection(x, z) {
+  const i = Math.max(0, Math.min(BLOCKS, Math.round((x + HALF - ROAD / 2) / PITCH)));
+  const j = Math.max(0, Math.min(BLOCKS, Math.round((z + HALF - ROAD / 2) / PITCH)));
+  return { i, j, ...intersection(i, j) };
 }
 
-export function buildCity(scene) {
-  const rnd = mulberry32(20261119);
-  const group = new THREE.Group();
-  group.name = 'city';
+export function districtAt(x, z) {
+  const col = Math.max(0, Math.min(3, Math.floor((x + HALF) / (PITCH * 2))));
+  const row = Math.max(0, Math.min(3, Math.floor((z + HALF) / (PITCH * 2))));
+  return DISTRICTS[row * 4 + col];
+}
 
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(CITY_HALF * 2, CITY_HALF * 2),
-    new THREE.MeshStandardMaterial({ map: paintGround(), roughness: 0.95 }),
-  );
-  ground.rotation.x = -Math.PI / 2;
-  ground.receiveShadow = true;
-  group.add(ground);
+export function districtCenter(index) {
+  const col = index % 4;
+  const row = Math.floor(index / 4);
+  return {
+    x: -HALF + col * PITCH * 2 + PITCH,
+    z: -HALF + row * PITCH * 2 + PITCH,
+  };
+}
 
-  // Marina water in the north-east corner of the map.
-  const water = new THREE.Mesh(
-    new THREE.PlaneGeometry(300, 300),
-    new THREE.MeshStandardMaterial({ color: 0x1e6f8e, roughness: 0.25, metalness: 0.4 }),
-  );
-  water.rotation.x = -Math.PI / 2;
-  water.position.set(450, 0.5, -450);
-  group.add(water);
-
-  // Towers: a single instanced mesh, coloured per district tint.
-  const boxGeo = new THREE.BoxGeometry(1, 1, 1);
-  const boxMat = new THREE.MeshStandardMaterial({ roughness: 0.85 });
-  const towerSpots = [];
-  for (let bx = -CITY_HALF; bx < CITY_HALF; bx += ROAD_STEP) {
-    for (let bz = -CITY_HALF; bz < CITY_HALF; bz += ROAD_STEP) {
-      if (bx === 300 && bz === -500) continue; // the marina water
-      const count = 1 + Math.floor(rnd() * 3);
-      for (let i = 0; i < count; i++) {
-        const w = 22 + rnd() * 30;
-        const d = 22 + rnd() * 30;
-        const h = 14 + rnd() * rnd() * 90 + (Math.abs(bx) < 200 && Math.abs(bz) < 200 ? 40 : 0);
-        const x = bx + 14 + rnd() * (ROAD_STEP - 28 - w) + w / 2;
-        const z = bz + 14 + rnd() * (ROAD_STEP - 28 - d) + d / 2;
-        towerSpots.push({ x, z, w, d, h });
+// Build the whole city from a seed: one building list, one shop list.
+export function buildCity(seed) {
+  const rng = makeRng(seed);
+  const buildings = [];
+  for (let bx = 0; bx < BLOCKS; bx += 1) {
+    for (let bz = 0; bz < BLOCKS; bz += 1) {
+      const district = districtAt(-HALF + bx * PITCH + PITCH / 2, -HALF + bz * PITCH + PITCH / 2);
+      const count = rangeInt(rng, 1, 4);
+      for (let k = 0; k < count; k += 1) {
+        const w = range(rng, 16, 34);
+        const d = range(rng, 16, 34);
+        const x = -HALF + bx * PITCH + ROAD + w / 2 + rng() * (BLOCK - w);
+        const z = -HALF + bz * PITCH + ROAD + d / 2 + rng() * (BLOCK - d);
+        const h = range(rng, district.low, district.high);
+        buildings.push({
+          x, z, w, d, h,
+          tint: district.tint,
+          shade: 0.95 + rng() * 0.35,
+          district: district.name,
+        });
       }
     }
   }
-  const towers = new THREE.InstancedMesh(boxGeo, boxMat, towerSpots.length);
-  const m4 = new THREE.Matrix4();
-  const quat = new THREE.Quaternion();
-  const scl = new THREE.Vector3();
-  const pos = new THREE.Vector3();
-  const col = new THREE.Color();
-  // One shared composer for every instanced mesh in the city: position and
-  // scale in, matrix out, so the placement loops stay short.
-  function placeAt(mesh, i, x, y, z, sx = 1, sy = 1, sz = 1) {
-    pos.set(x, y, z);
-    scl.set(sx, sy, sz);
-    m4.compose(pos, quat, scl);
-    mesh.setMatrixAt(i, m4);
-  }
-  towerSpots.forEach((p, i) => {
-    placeAt(towers, i, p.x, p.h / 2, p.z, p.w, p.h, p.d);
-    const gx = Math.floor((p.x + CITY_HALF) / CELL);
-    const gz = Math.floor((p.z + CITY_HALF) / CELL);
-    const d = DISTRICTS[Math.min(15, Math.max(0, gz * 4 + gx))];
-    col.setHex(d.tint).multiplyScalar(0.75 + rnd() * 0.5);
-    towers.setColorAt(i, col);
-  });
-  towers.castShadow = true;
-  towers.receiveShadow = true;
-  group.add(towers);
-  // Collision boxes for the car, kept on the group for the game loop.
-  group.userData.colliders = towerSpots.map(p => ({ cx: p.x, cz: p.z, hw: p.w / 2, hd: p.d / 2 }));
-
-  // Water tanks on a few tall rooftops.
-  const tankGeo = new THREE.CylinderGeometry(3, 3, 8, 8);
-  const tankMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2f, roughness: 0.9 });
-  const tanks = new THREE.InstancedMesh(tankGeo, tankMat, 24);
-  for (let i = 0; i < 24; i++) {
-    const p = towerSpots[Math.floor(rnd() * towerSpots.length)];
-    placeAt(tanks, i, p.x, p.h + 4, p.z);
-  }
-  group.add(tanks);
-
-  // Palms along the boulevards.
-  const trunkGeo = new THREE.CylinderGeometry(0.7, 1.1, 12, 6);
-  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x7a5a38, roughness: 1 });
-  const crownGeo = new THREE.ConeGeometry(6, 7, 7);
-  const crownMat = new THREE.MeshStandardMaterial({ color: 0x2f8f4f, roughness: 0.9 });
-  const palmSpots = [];
-  for (let v = -550; v <= 550; v += 100) {
-    for (const off of [-46, 46]) {
-      if (rnd() < 0.75) palmSpots.push([v + off, -550 + Math.floor(rnd() * 12) * 100]);
-      if (rnd() < 0.75) palmSpots.push([-550 + Math.floor(rnd() * 12) * 100, v + off]);
-    }
-  }
-  const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, palmSpots.length);
-  const crowns = new THREE.InstancedMesh(crownGeo, crownMat, palmSpots.length);
-  palmSpots.forEach(([x, z], i) => {
-    placeAt(trunks, i, x, 6, z);
-    placeAt(crowns, i, x, 14, z);
-  });
-  group.add(trunks);
-  group.add(crowns);
-
-  // Street lamps: pole plus a glowing head.
-  const poleGeo = new THREE.CylinderGeometry(0.35, 0.35, 9, 6);
-  const poleMat = new THREE.MeshStandardMaterial({ color: 0x333944, roughness: 0.6, metalness: 0.5 });
-  const headGeo = new THREE.SphereGeometry(1.1, 8, 6);
-  const headMat = new THREE.MeshStandardMaterial({ color: 0xffe9a8, emissive: 0xffc860, emissiveIntensity: 1.6 });
-  const lampSpots = [];
-  for (let v = -500; v <= 500; v += 100) {
-    lampSpots.push([v, -450]);
-    lampSpots.push([v, 450]);
-    lampSpots.push([-450, v]);
-    lampSpots.push([450, v]);
-  }
-  const poles = new THREE.InstancedMesh(poleGeo, poleMat, lampSpots.length);
-  const heads = new THREE.InstancedMesh(headGeo, headMat, lampSpots.length);
-  lampSpots.forEach(([x, z], i) => {
-    placeAt(poles, i, x, 4.5, z);
-    placeAt(heads, i, x, 9.2, z);
-  });
-  group.add(poles);
-  group.add(heads);
-
-  // Floating district name plates, low enough to sit over the rooftops
-  // instead of drifting across the top of the frame and the HUD banner.
-  for (const d of DISTRICTS) {
-    const plate = districtPlate(d.name);
-    plate.position.set(d.gx * CELL - CITY_HALF + CELL / 2, 30, d.gz * CELL - CITY_HALF + CELL / 2);
-    group.add(plate);
-  }
-
-  scene.add(group);
-  return group;
+  const shops = [
+    { kind: 'weapons', name: 'Ironmarket Arms', ...intersection(2, 6) },
+    { kind: 'health', name: 'Fairmont Clinic', ...intersection(6, 2) },
+    { kind: 'paint', name: 'Lantern Row Customs', ...intersection(6, 6) },
+  ];
+  const safehouses = [
+    { name: 'Driftwood Safehouse', ...intersection(1, 1) },
+    { name: 'Northbank Safehouse', ...intersection(7, 1) },
+  ];
+  const garage = { name: 'Aldergate Garage', ...intersection(4, 4) };
+  const start = { ...intersection(4, 7), heading: Math.PI };
+  return { buildings, shops, safehouses, garage, start, seed };
 }
 
-export function makeBeacon(color = 0xf5c542) {
-  const g = new THREE.Group();
-  const beam = new THREE.Mesh(
-    new THREE.CylinderGeometry(2.2, 3.2, 60, 12, 1, true),
-    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false }),
-  );
-  beam.position.y = 30;
-  const ring = new THREE.Mesh(
-    new THREE.RingGeometry(4, 6, 32),
-    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, side: THREE.DoubleSide }),
-  );
-  ring.rotation.x = -Math.PI / 2;
-  ring.position.y = 0.3;
-  g.add(beam, ring);
-  g.userData.ring = ring;
-  return g;
+// True when the circle at (x, z) with radius r overlaps any building box.
+export function hitsBuilding(city, x, z, r) {
+  for (const b of city.buildings) {
+    const dx = Math.max(Math.abs(x - b.x) - b.w / 2, 0);
+    const dz = Math.max(Math.abs(z - b.z) - b.d / 2, 0);
+    if (dx * dx + dz * dz < r * r) return b;
+  }
+  return null;
 }
 
-export function setMood(scene, sun, hemi, mode) {
-  // mode: 'day' | 'dusk' | 'night'
-  if (mode === 'night') {
-    scene.background = new THREE.Color(0x0b1026);
-    scene.fog = new THREE.Fog(0x0b1026, 120, 900);
-    sun.color.setHex(0x8fa8ff);
-    sun.intensity = 0.7;
-    sun.position.set(-300, 220, -200);
-    hemi.intensity = 0.35;
-  } else if (mode === 'dusk') {
-    scene.background = new THREE.Color(0x2a1a3a);
-    scene.fog = new THREE.Fog(0x3a2030, 150, 1100);
-    sun.color.setHex(0xff8a3d);
-    sun.intensity = 1.6;
-    sun.position.set(-500, 90, 250);
-    hemi.intensity = 0.55;
-  } else {
-    scene.background = new THREE.Color(0xffd9a0);
-    scene.fog = new THREE.Fog(0xf2c98a, 200, 1400);
-    sun.color.setHex(0xffe0b0);
-    sun.intensity = 3.0;
-    sun.position.set(400, 500, 200);
-    hemi.intensity = 1.15;
+// Push a circle out of whatever building it overlaps. Returns true on a hit.
+export function resolveBuilding(city, body) {
+  const b = hitsBuilding(city, body.x, body.z, body.radius);
+  if (!b) return false;
+  const dx = body.x - b.x;
+  const dz = body.z - b.z;
+  const px = b.w / 2 + body.radius - Math.abs(dx);
+  const pz = b.d / 2 + body.radius - Math.abs(dz);
+  if (px < pz) body.x = b.x + Math.sign(dx || 1) * (b.w / 2 + body.radius);
+  else body.z = b.z + Math.sign(dz || 1) * (b.d / 2 + body.radius);
+  return true;
+}
+
+// Line-of-sight between two ground points, sampled against building boxes.
+export function hasLineOfSight(city, ax, az, bx, bz) {
+  const steps = 12;
+  for (let s = 1; s < steps; s += 1) {
+    const x = ax + ((bx - ax) * s) / steps;
+    const z = az + ((bz - az) * s) / steps;
+    if (hitsBuilding(city, x, z, 1.5)) return false;
   }
+  return true;
+}
+
+// A short route along the grid from one intersection to another.
+export function routeBetween(a, b) {
+  const points = [];
+  let { i, j } = a;
+  while (i !== b.i) {
+    i += Math.sign(b.i - i);
+    points.push(intersection(i, j));
+  }
+  while (j !== b.j) {
+    j += Math.sign(b.j - j);
+    points.push(intersection(i, j));
+  }
+  return points;
+}
+
+// A random intersection on the grid, for traffic starts and side jobs.
+export function randomIntersection(rng) {
+  return intersection(Math.floor(rng() * (BLOCKS + 1)), Math.floor(rng() * (BLOCKS + 1)));
+}
+
+// Clamp a ground position inside the city, with a margin for the bay.
+export function clampToCity(x, z, margin = 6) {
+  return {
+    x: Math.max(-HALF - margin, Math.min(HALF + margin, x)),
+    z: Math.max(-HALF - margin, Math.min(HALF + margin, z)),
+  };
 }
