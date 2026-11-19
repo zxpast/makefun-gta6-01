@@ -1,6 +1,7 @@
-// A seeded random source (splitmix32): the same seed always deals the same
-// city, traffic and pedestrians, which is what makes screenshots repeatable
-// and the sim tests deterministic. Nothing in the game reads Math.random.
+// A seeded random source (splitmix32). The same seed always deals the
+// same city, the same traffic and the same pedestrians, which is what makes
+// the screenshots repeatable and the sim tests deterministic. Nothing in
+// the game reads Math.random — every die roll goes through here.
 export function createRandom(seed) {
   let state = (seed >>> 0) || 0x9e3779b9;
   function next() {
@@ -17,7 +18,7 @@ export function createRandom(seed) {
     range(min, max) { return min + next() * (max - min); },
     /** Uniform integer in [min, max]. */
     int(min, max) { return min + Math.floor(next() * (max - min + 1)); },
-    /** Pick one element of a non-empty array. */
+    /** One element of a non-empty list. */
     pick(list) { return list[Math.floor(next() * list.length)]; },
   };
 }

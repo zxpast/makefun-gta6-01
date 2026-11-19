@@ -1,6 +1,6 @@
 // A 5x7 bitmap font, drawn from '#' rows so the screenshot painter can
 // put HUD text on its frames without any font file. Letters, digits and
-// the punctuation the HUD needs.
+// the punctuation the HUD needs — including '*' for the wanted stars.
 const GLYPHS = {
   A: ['.###.', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'],
   B: ['####.', '#...#', '#...#', '####.', '#...#', '#...#', '####.'],

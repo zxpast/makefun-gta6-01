@@ -18,7 +18,6 @@ function dist(ax, az, bx, bz) { return Math.hypot(bx - ax, bz - az); }
 export function createAutopilot(sim, missions) {
   let route = [];
   let routeTarget = null;
-  let routeAt = -10;
   let roamTarget = null;
   let lastPos = null;
   let lastMoveAt = 0;
@@ -171,7 +170,6 @@ export function createAutopilot(sim, missions) {
       }
       route = routeBetween(rx, rz, goal.x, goal.z);
       routeTarget = key;
-      routeAt = sim.state.time;
     }
     while (route.length > 1 && dist(p.x, p.z, route[0].x, route[0].z) < 5) route.shift();
     pruneRoute();

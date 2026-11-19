@@ -1,7 +1,7 @@
-// Port Solano's map: a 120 m road grid, six districts, procedural buildings
-// and the named places missions point at. Pure data and geometry — no DOM,
-// no Three.js — so the sim, the autopilot and the Node screenshot painter
-// all share exactly the same city.
+// Port Solano's map: a 120 m road grid, six districts, procedural towers
+// and the named places the missions point at. Pure data and geometry — no
+// DOM, no Three.js — so the sim, the autopilot and the Node screenshot
+// painter all share exactly the same city.
 import { CITY, DISTRICTS } from './config.js';
 
 const VERTICALS = [60, 180, 300, 420, 540, 660, 780, 900];
@@ -9,8 +9,8 @@ const HORIZONTALS = [60, 180, 300, 420, 540];
 
 export function buildCity(random) {
   const buildings = [];
-  // One building lot per block between four roads; each lot holds 1–3 towers
-  // with a height that grows toward Downtown.
+  // One lot per block between four roads; each lot holds 1–3 towers whose
+  // height grows toward Downtown, so the skyline reads from anywhere.
   for (let ix = 0; ix < VERTICALS.length - 1; ix += 1) {
     for (let iz = 0; iz < HORIZONTALS.length - 1; iz += 1) {
       const x0 = VERTICALS[ix] + 14;
@@ -18,16 +18,17 @@ export function buildCity(random) {
       const z0 = HORIZONTALS[iz] + 14;
       const z1 = HORIZONTALS[iz + 1] - 14;
       const cx = (VERTICALS[ix] + VERTICALS[ix + 1]) / 2;
-      const downtown = Math.hypot(cx - 720, (HORIZONTALS[iz] + HORIZONTALS[iz + 1]) / 2 - 120);
+      const cz = (HORIZONTALS[iz] + HORIZONTALS[iz + 1]) / 2;
+      const downtown = Math.hypot(cx - 720, cz - 120);
       const tall = Math.max(0, 1 - downtown / 520);
       const count = random.int(1, 3);
       for (let k = 0; k < count; k += 1) {
         const w = random.range(16, 34);
         const d = random.range(16, 34);
-        const bx = random.range(x0 + w / 2, x1 - w / 2);
-        const bz = random.range(z0 + d / 2, z1 - d / 2);
         buildings.push({
-          x: bx, z: bz, w, d,
+          x: random.range(x0 + w / 2, x1 - w / 2),
+          z: random.range(z0 + d / 2, z1 - d / 2),
+          w, d,
           h: 8 + random.range(0, 26) + tall * random.range(10, 42),
           shade: random.range(0.75, 1.15),
         });
@@ -74,7 +75,7 @@ export function onRoad(x, z) {
 }
 
 function segmentHitsRect(ax, az, bx, bz, r) {
-  // Slab test: does segment AB cross the rectangle (with a small margin)?
+  // Slab test: does segment AB cross the rectangle, with a 1 m margin?
   const minX = r.x - r.w / 2 - 1;
   const maxX = r.x + r.w / 2 + 1;
   const minZ = r.z - r.d / 2 - 1;
@@ -116,7 +117,7 @@ export function hasLineOfSight(city, ax, az, bx, bz) {
 
 function nodeId(ix, iz) { return iz * VERTICALS.length + ix; }
 
-/** Breadth-first route over intersections, as a list of {x, z} waypoints. */
+/** Breadth-first route over the intersections, as {x, z} waypoints. */
 export function routeBetween(ax, az, bx, bz) {
   const startX = VERTICALS.indexOf(nearestVertical(ax));
   const startZ = HORIZONTALS.indexOf(nearestHorizontal(az));

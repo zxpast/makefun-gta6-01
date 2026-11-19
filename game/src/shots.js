@@ -40,7 +40,8 @@ function placePoliceForShot(sim) {
 
 function placeHeliForShot(sim) {
   // Ahead of the player and off to the side, so the helicopter and its
-  // spotlight cone are inside the chase camera's frame.
+  // spotlight cone are inside the chase camera's frame. The heli sits
+  // heading-relative: 25 m ahead, 12 m to the player's right.
   const p = sim.state.player;
   sim.state.heli.x = p.x + Math.sin(p.angle) * 25 + Math.cos(p.angle) * 12;
   sim.state.heli.z = p.z + Math.cos(p.angle) * 25 - Math.sin(p.angle) * 12;

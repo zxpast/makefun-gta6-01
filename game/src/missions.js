@@ -113,7 +113,7 @@ export function createMissions(sim) {
   const SIDE_JOBS = sideJobDefs(sim.city.places);
   const state = {
     chapterIndex: 0, stepIndex: 0, timer: 0, waitLeft: 0,
-    active: null, // { kind: 'chapter'|'side', def, step }
+    active: null, // { kind: 'chapter'|'side', def }
     completed: [], failed: null, targetCar: null,
   };
 

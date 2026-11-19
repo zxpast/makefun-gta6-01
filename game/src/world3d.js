@@ -110,7 +110,7 @@ export function createWorld3d(canvas, city) {
     beacons.push(beacon);
   }
 
-  // Neon strip over the Pier, on at night.
+  // Neon strips over the Pier, on at night.
   const neon = new THREE.Mesh(
     new THREE.BoxGeometry(90, 1.2, 1.2),
     new THREE.MeshBasicMaterial({ color: 0xff5ad8 }),
@@ -293,9 +293,9 @@ export function createWorld3d(canvas, city) {
     }
     state.traffic.forEach((t, i) => {
       if (i >= trafficPool.length) return;
-      const m = trafficPool[i];
-      m.children[0].material.color.setHex(t.color);
-      placeCar(m, t);
+      const mesh = trafficPool[i];
+      mesh.children[0].material.color.setHex(t.color);
+      placeCar(mesh, t);
     });
     for (let i = state.traffic.length; i < trafficPool.length; i += 1) trafficPool[i].visible = false;
     state.police.forEach((c, i) => {
@@ -305,12 +305,12 @@ export function createWorld3d(canvas, city) {
     for (let i = state.police.length; i < copPool.length; i += 1) copPool[i].visible = false;
     state.peds.forEach((ped, i) => {
       if (i >= pedPool.length) return;
-      const m = pedPool[i];
-      m.children[0].material.color.setHex(ped.shirt);
-      m.position.set(ped.x, ped.down ? 0.4 : 0, ped.z);
-      m.rotation.y = ped.angle;
-      m.rotation.z = ped.down ? Math.PI / 2 : 0;
-      m.visible = true;
+      const mesh = pedPool[i];
+      mesh.children[0].material.color.setHex(ped.shirt);
+      mesh.position.set(ped.x, ped.down ? 0.4 : 0, ped.z);
+      mesh.rotation.y = ped.angle;
+      mesh.rotation.z = ped.down ? Math.PI / 2 : 0;
+      mesh.visible = true;
     });
     for (let i = state.peds.length; i < pedPool.length; i += 1) pedPool[i].visible = false;
     state.roadblocks.forEach((rb, i) => {

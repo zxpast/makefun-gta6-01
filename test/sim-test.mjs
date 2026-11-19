@@ -29,6 +29,8 @@ function freshGame(seed = 7) {
   return { random, city, sim, missions };
 }
 
+const IDLE = { steer: 0, throttle: 0, run: false, nos: false, enter: false, exit: false, shoot: false, weaponSwitch: false, radio: false, garage: false, garageBuy: null, ammoBuy: null };
+
 function driveFor(sim, missions, seconds) {
   const pilot = createAutopilot(sim, missions);
   const steps = Math.floor(seconds / STEP);
@@ -108,7 +110,7 @@ function driveFor(sim, missions, seconds) {
   for (let i = 0; i < 600 && !sim.state.car; i += 1) sim.step(STEP, pilot.input());
   check('stole a car', !!sim.state.car);
   check('wanted rose after theft', sim.wantedStars() > before, `${before} -> ${sim.wantedStars()} stars`);
-  for (let i = 0; i < 120; i += 1) sim.step(STEP, { steer: 0, throttle: 0, run: false, nos: false, enter: false, exit: false, shoot: false, weaponSwitch: false, radio: false, garage: false, garageBuy: null, ammoBuy: null });
+  for (let i = 0; i < 120; i += 1) sim.step(STEP, IDLE);
   check('police spawned', sim.state.police.length >= 2, `${sim.state.police.length} cruisers`);
 }
 
@@ -117,8 +119,7 @@ function driveFor(sim, missions, seconds) {
   const { sim } = freshGame();
   sim.state.wanted = 4;
   sim.state.roadblockTimer = 0;
-  const idle = { steer: 0, throttle: 0, run: false, nos: false, enter: false, exit: false, shoot: false, weaponSwitch: false, radio: false, garage: false, garageBuy: null, ammoBuy: null };
-  for (let i = 0; i < 180; i += 1) sim.step(STEP, idle);
+  for (let i = 0; i < 180; i += 1) sim.step(STEP, IDLE);
   check('helicopter at 4 stars', sim.state.heli.active);
   check('roadblock at 4 stars', sim.state.roadblocks.length >= 1, `${sim.state.roadblocks.length} blocks`);
 }
@@ -131,8 +132,7 @@ function driveFor(sim, missions, seconds) {
   sim.state.player.z = 360;
   sim.state.wanted = 2;
   sim.state.losTimer = 10;
-  const idle = { steer: 0, throttle: 0, run: false, nos: false, enter: false, exit: false, shoot: false, weaponSwitch: false, radio: false, garage: false, garageBuy: null, ammoBuy: null };
-  for (let i = 0; i < 60 * 30; i += 1) sim.step(STEP, idle);
+  for (let i = 0; i < 60 * 30; i += 1) sim.step(STEP, IDLE);
   check('wanted fades while hidden', sim.wantedStars() === 0, `${sim.state.wanted.toFixed(2)} left`);
 }
 
@@ -155,8 +155,7 @@ function driveFor(sim, missions, seconds) {
   sim.state.cash = 2000;
   check('pistol bought', sim.buyWeapon('pistol') && sim.state.weapons.owned.pistol);
   check('pistol has 30 rounds', sim.state.weapons.ammo.pistol === 30);
-  const idle = { steer: 0, throttle: 0, run: false, nos: false, enter: false, exit: false, shoot: true, weaponSwitch: false, radio: false, garage: false, garageBuy: null, ammoBuy: null };
-  sim.step(STEP, idle);
+  sim.step(STEP, { ...IDLE, shoot: true });
   check('shot spent a round', sim.state.weapons.ammo.pistol === 29, `${sim.state.weapons.ammo.pistol} left`);
 }
 
@@ -188,12 +187,20 @@ function driveFor(sim, missions, seconds) {
   check('chase is driving', !!sim.state.car && Math.abs(sim.state.car.speed) > 5, `${sim.state.car ? sim.state.car.speed.toFixed(1) : 0} m/s`);
 }
 
-// 15 — the clock advances and daylight follows it.
+// 15 — the roadblock scene stages a dusk block at four stars.
+{
+  const { sim, missions } = freshGame();
+  stageShot('roadblock', sim, missions);
+  check('roadblock has 4 stars', sim.wantedStars() === 4, `${sim.wantedStars()} stars`);
+  check('roadblock scene has a block', sim.state.roadblocks.length >= 1);
+  check('roadblock is dusk', sim.state.clockMinutes >= 1080 && sim.state.clockMinutes < 1200);
+}
+
+// 16 — the clock advances and daylight follows it.
 {
   const { sim } = freshGame();
-  const idle = { steer: 0, throttle: 0, run: false, nos: false, enter: false, exit: false, shoot: false, weaponSwitch: false, radio: false, garage: false, garageBuy: null, ammoBuy: null };
   const start = sim.state.clockMinutes;
-  for (let i = 0; i < 120; i += 1) sim.step(STEP, idle);
+  for (let i = 0; i < 120; i += 1) sim.step(STEP, IDLE);
   check('clock advances', sim.state.clockMinutes > start, `${start} -> ${sim.state.clockMinutes}`);
   check('daylight at dusk', sim.daylight() > 0 && sim.daylight() < 1, sim.daylight().toFixed(2));
 }

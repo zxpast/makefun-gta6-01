@@ -15,8 +15,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
-const here = fileURLToPath(new URL('.', import.meta.url));
-const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+const root = fileURLToPath(new URL('.', import.meta.url));
+const dest = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 
 // The scorer's own caps (reference/gate.json in the kit). Only the text
 // cap shapes the dossier bytes; the others refuse an entry the scorer
@@ -24,7 +24,7 @@ const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 // 993 files under game/ or 48 MiB of game files in all, or a path under
 // game/ over 1000 bytes. game/ counts beside /output's own 1000-entry
 // cap, together with screenshots/ and dossier.json.
-const LIMITS = {
+const CAPS = {
   text_max_bytes: 163840,
   screenshots: { max: 4, max_bytes: 262144 },
   game_max_files: 993,
@@ -34,13 +34,13 @@ const LIMITS = {
 
 // Start from a clean slate, so a second run writes exactly what the
 // first did — byte for byte.
-rmSync(join(out, 'game'), { recursive: true, force: true });
-rmSync(join(out, 'screenshots'), { recursive: true, force: true });
-rmSync(join(out, 'dossier.json'), { force: true });
-mkdirSync(out, { recursive: true });
+rmSync(join(dest, 'game'), { recursive: true, force: true });
+rmSync(join(dest, 'screenshots'), { recursive: true, force: true });
+rmSync(join(dest, 'dossier.json'), { force: true });
+mkdirSync(dest, { recursive: true });
 
-cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
-if (existsSync(join(here, 'screenshots'))) {
-  cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
+cpSync(join(root, 'game'), join(dest, 'game'), { recursive: true });
+if (existsSync(join(root, 'screenshots'))) {
+  cpSync(join(root, 'screenshots'), join(dest, 'screenshots'), { recursive: true });
 }
-writeFileSync(join(out, 'dossier.json'), buildDossier(out, LIMITS));
+writeFileSync(join(dest, 'dossier.json'), buildDossier(dest, CAPS));

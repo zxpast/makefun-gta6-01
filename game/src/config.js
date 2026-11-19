@@ -1,6 +1,6 @@
-// Solano Heat — every tuning number, colour and district in one place.
-// The city is 960 by 640 metres; x runs east, z runs south, y is up.
-// Roads sit on a 120 m grid; buildings fill the blocks between them.
+// Solano Heat — the one place every number lives. Port Solano is 960 by
+// 640 metres, x east, z south, y up. Roads run on a 120 m grid and the
+// buildings fill the blocks between them. Nothing here touches the DOM.
 export const STEP = 1 / 60;
 
 export const CITY = { width: 960, height: 640, roadGap: 120, roadHalf: 7, margin: 60 };
@@ -21,7 +21,8 @@ export const PLAYER = {
 
 export const CAR = {
   accel: 16, brake: 30, reverseAccel: 10, maxSpeed: 34, maxReverse: 9,
-  steer: 1.9, grip: 6, length: 4.4, width: 2, drag: 0.35, nosBoost: 16, nosDrain: 35,
+  steer: 1.9, grip: 6, length: 4.4, width: 2, drag: 0.35,
+  nosBoost: 16, nosDrain: 35,
 };
 
 export const TRAFFIC_COUNT = 22;
@@ -29,7 +30,8 @@ export const PED_COUNT = 36;
 export const PARKED_COUNT = 14;
 
 export const WANTED = {
-  max: 5, decayPerSecond: 0.045, quietSeconds: 6, bustRange: 3.2, bustSpeed: 2.5,
+  max: 5, decayPerSecond: 0.045, quietSeconds: 6,
+  bustRange: 3.2, bustSpeed: 2.5,
   policePerStar: [0, 2, 3, 4, 5, 6], heliAt: 4, roadblockAt: 4,
 };
 
@@ -46,7 +48,9 @@ export const GARAGE = {
   nos: { name: 'NOS Kit', price: 600, refill: 100 },
 };
 
-export const ECONOMY = { startCash: 150, taxiFare: 120, courierPay: 200, vigilantePay: 250, repoPay: 500 };
+export const ECONOMY = {
+  startCash: 150, taxiFare: 120, courierPay: 200, vigilantePay: 250, repoPay: 500,
+};
 
 export const SAVE_KEY = 'solano-heat.save.v5';
 
@@ -61,5 +65,5 @@ export const PALETTE = {
 
 export const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 
-/** Game clock: one in-game minute per real second, starting at 17:00 (sunset chase). */
+/** One in-game minute per real second; the game opens at 17:00, sunset. */
 export const CLOCK = { startMinutes: 17 * 60, minutesPerSecond: 1 };

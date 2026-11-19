@@ -8,17 +8,17 @@ import { createServer } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const gameRoot = resolve(fileURLToPath(new URL('./game', import.meta.url)));
+const rootDir = resolve(fileURLToPath(new URL('./game', import.meta.url)));
 
-function pickPort(argv) {
+function choosePort(argv) {
   const at = argv.indexOf('--port');
   const wanted = at === -1 ? 8080 : Number(argv[at + 1]);
   return Number.isInteger(wanted) && wanted > 0 && wanted < 65536 ? wanted : 8080;
 }
 
-const port = pickPort(process.argv.slice(2));
+const port = choosePort(process.argv.slice(2));
 
-const TYPES = {
+const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8',
@@ -35,20 +35,7 @@ const TYPES = {
   '.txt': 'text/plain; charset=utf-8',
 };
 
-const server = createServer((request, response) => {
-  let pathname;
-  try {
-    pathname = decodeURIComponent(new URL(request.url ?? '/', 'http://localhost').pathname);
-  } catch {
-    response.writeHead(400).end('bad request');
-    return;
-  }
-  if (pathname.endsWith('/')) pathname += 'index.html';
-  const file = resolve(join(gameRoot, normalize(pathname)));
-  if (file !== gameRoot && !file.startsWith(gameRoot + sep)) {
-    response.writeHead(403).end('forbidden');
-    return;
-  }
+function sendFile(file, response) {
   let bytes;
   try {
     const info = statSync(file);
@@ -59,11 +46,28 @@ const server = createServer((request, response) => {
     return;
   }
   response.writeHead(200, {
-    'content-type': TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream',
+    'content-type': MIME[extname(file).toLowerCase()] ?? 'application/octet-stream',
     'content-length': bytes,
     'cache-control': 'no-store',
   });
   createReadStream(file).pipe(response);
+}
+
+const server = createServer((request, response) => {
+  let pathname;
+  try {
+    pathname = decodeURIComponent(new URL(request.url ?? '/', 'http://localhost').pathname);
+  } catch {
+    response.writeHead(400).end('bad request');
+    return;
+  }
+  if (pathname.endsWith('/')) pathname += 'index.html';
+  const file = resolve(join(rootDir, normalize(pathname)));
+  if (file !== rootDir && !file.startsWith(rootDir + sep)) {
+    response.writeHead(403).end('forbidden');
+    return;
+  }
+  sendFile(file, response);
 });
 
 server.listen(port, '127.0.0.1', () => {

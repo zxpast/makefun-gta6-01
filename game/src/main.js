@@ -22,7 +22,7 @@ import { applySave, loadGame, saveGame } from './save.js';
 import { stageShot } from './shots.js';
 
 const MAX_FRAME = 0.25;
-const GARAGE_AT = { x: 700, z: 300 };
+const GARAGE_SPOT = { x: 700, z: 300 };
 
 const params = new URLSearchParams(window.location.search);
 const shot = params.get('shot');
@@ -40,7 +40,7 @@ const hud = createHud(document, city);
 const audio = createAudio();
 applySave(sim, missions, loadGame());
 
-const baseInput = {
+const idleInput = {
   steer: 0, throttle: 0, run: false, nos: false,
   enter: false, exit: false, shoot: false, weaponSwitch: false,
   radio: false, garage: false, garageBuy: null, ammoBuy: null,
@@ -62,40 +62,66 @@ function runShot(name) {
 function runGame() {
   const input = createInput(canvas);
   const pilot = createAutopilot(sim, missions);
+  const queued = { enter: false, shoot: false, weaponSwitch: false };
   let screen = 'title';
   let garageOpen = false;
   let missionsOpen = false;
-  let accumulator = 0;
+  let acc = 0;
   let last = performance.now();
-  let saveTimer = 0;
+  let saveClock = 0;
 
-  function nearGarage() {
+  function atGarage() {
     const p = sim.state.player;
-    return Math.hypot(p.x - GARAGE_AT.x, p.z - GARAGE_AT.z) < 16;
+    return Math.hypot(p.x - GARAGE_SPOT.x, p.z - GARAGE_SPOT.z) < 16;
   }
 
-  function startGame() {
+  function begin() {
     sim.reset();
     applySave(sim, missions, loadGame());
-    accumulator = 0;
+    acc = 0;
     screen = 'play';
     hud.showScreen('play');
     hud.banner('Port Solano — steal a car, make a name. M for jobs.');
     audio.unlock();
   }
 
-  function endGame(reason) {
+  function finish(reason) {
     screen = 'over';
     hud.showScreen('over');
     hud.setOverText(reason);
     saveGame(sim, missions);
   }
 
+  function buyFromMenu(n) {
+    const picks = ['armor', 'engine', 'nos', 'nos-refill', 'pistol', 'smg', 'shotgun'];
+    const pick = picks[n - 1];
+    if (!pick) return;
+    if (pick === 'nos-refill') {
+      if (sim.state.upgrades.nos && sim.state.cash >= 100) {
+        sim.state.cash -= 100;
+        sim.state.upgrades.nosAmount = 100;
+        hud.banner('NOS refilled.');
+      }
+      return;
+    }
+    sim.buyUpgrade(pick) || sim.buyWeapon(pick);
+  }
+
+  function takeJob(n) {
+    const jobs = ['taxi', 'courier-job', 'vigilante', 'repo'];
+    const job = jobs[n - 1];
+    if (job && missions.startSideJob(job)) {
+      missionsOpen = false;
+      hud.hideMenus();
+      hud.banner(`${missions.currentDef().title} — good luck.`);
+    }
+  }
+
   function handleActions() {
     const actions = input.takeActions();
     setInCar(!!sim.state.car);
     if (actions & ACTION_CONFIRM) {
-      if (screen === 'title' || screen === 'over') startGame();
+      if (screen === 'title' || screen === 'over') begin();
       else if (screen === 'pause') { screen = 'play'; hud.showScreen('play'); }
     }
     if (actions & ACTION_PAUSE) {
@@ -110,7 +136,7 @@ function runGame() {
     if (actions & ACTION_RADIO) hud.banner(`Radio: ${audio.nextStation()}`);
     if (actions & ACTION_GARAGE) {
       if (garageOpen) { garageOpen = false; hud.hideMenus(); }
-      else if (nearGarage()) { garageOpen = true; missionsOpen = false; hud.showGarage(sim.state); }
+      else if (atGarage()) { garageOpen = true; missionsOpen = false; hud.showGarage(sim.state); }
       else hud.banner('Garage is at Eastside — follow the gold beam.');
     }
     if (actions & ACTION_MISSIONS) {
@@ -119,77 +145,58 @@ function runGame() {
     }
     if (actions & ACTION_NUMBER) {
       const n = input.takeNumber();
-      if (garageOpen) {
-        const buys = { 1: 'armor', 2: 'engine', 3: 'nos', 4: 'nos-refill', 5: 'pistol', 6: 'smg', 7: 'shotgun' };
-        const pick = buys[n];
-        if (pick === 'nos-refill') {
-          if (sim.state.upgrades.nos && sim.state.cash >= 100) {
-            sim.state.cash -= 100;
-            sim.state.upgrades.nosAmount = 100;
-            hud.banner('NOS refilled.');
-          }
-        } else if (pick) sim.buyUpgrade(pick) || sim.buyWeapon(pick);
-      } else if (missionsOpen) {
-        const jobs = ['taxi', 'courier-job', 'vigilante', 'repo'];
-        const job = jobs[n - 1];
-        if (job && missions.startSideJob(job)) {
-          missionsOpen = false;
-          hud.hideMenus();
-          hud.banner(`${missions.currentDef().title} — good luck.`);
-        }
-      }
+      if (garageOpen) buyFromMenu(n);
+      else if (missionsOpen) takeJob(n);
     }
     // One-shot sim actions, consumed below in stepGame.
-    pending.enter = !!(actions & (ACTION_ENTER | ACTION_EXIT));
-    pending.shoot = !!(actions & ACTION_SHOOT);
-    pending.weaponSwitch = !!(actions & ACTION_WEAPON);
+    queued.enter = !!(actions & (ACTION_ENTER | ACTION_EXIT));
+    queued.shoot = !!(actions & ACTION_SHOOT);
+    queued.weaponSwitch = !!(actions & ACTION_WEAPON);
   }
-
-  const pending = { enter: false, shoot: false, weaponSwitch: false };
 
   function stepGame() {
     const drive = autoDemo ? pilot.input() : input.drive();
     const stepInput = {
-      ...baseInput,
+      ...idleInput,
       steer: drive.steer, throttle: drive.throttle,
       run: drive.run, nos: drive.nos,
-      enter: pending.enter, shoot: pending.shoot, weaponSwitch: pending.weaponSwitch,
+      enter: queued.enter, shoot: queued.shoot, weaponSwitch: queued.weaponSwitch,
     };
-    pending.enter = false;
-    pending.shoot = false;
-    pending.weaponSwitch = false;
+    queued.enter = false;
+    queued.shoot = false;
+    queued.weaponSwitch = false;
     const events = sim.step(STEP, stepInput);
     const doneBefore = missions.state.completed.length;
     missions.update(STEP);
     if (missions.state.completed.length > doneBefore) audio.chime();
     if (events & EVENT_SHOT) audio.shot();
     else if (events & EVENT_BOOM) audio.crash();
-    if (sim.state.busted) endGame('Busted by the Solano PD. The crew posts your bail — press Space to go again.');
-    else if (sim.state.dead) endGame('Lucia is down. The city keeps moving — press Space to go again.');
+    if (sim.state.busted) finish('Busted by the Solano PD. The crew posts your bail — press Space to go again.');
+    else if (sim.state.dead) finish('Lucia is down. The city keeps moving — press Space to go again.');
     if (autoDemo && !missions.state.active && missions.state.chapterIndex < missions.chapters.length) {
       missions.nextChapter();
     }
     audio.update(sim.state.player.speed, sim.wantedStars());
-    saveTimer += STEP;
-    if (saveTimer > 10) {
-      saveTimer = 0;
+    saveClock += STEP;
+    if (saveClock > 10) {
+      saveClock = 0;
       saveGame(sim, missions);
     }
   }
 
   function frame(now) {
     requestAnimationFrame(frame);
-    accumulator += Math.min((now - last) / 1000, MAX_FRAME);
+    acc += Math.min((now - last) / 1000, MAX_FRAME);
     last = now;
     handleActions();
     if (screen === 'play') {
-      while (accumulator >= STEP) {
+      while (acc >= STEP) {
         stepGame();
-        accumulator -= STEP;
-        if (screen !== 'play') { accumulator = 0; break; }
+        acc -= STEP;
+        if (screen !== 'play') { acc = 0; break; }
       }
     } else {
-      accumulator = 0;
+      acc = 0;
     }
     world3d.draw(sim.state, sim.state.time);
     hud.update(sim.state, sim.wantedStars(), missions.statusText(), { radio: audio.stationName() });

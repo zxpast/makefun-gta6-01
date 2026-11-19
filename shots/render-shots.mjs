@@ -22,16 +22,34 @@ import { encodePng } from './png.mjs';
 const W = 1280;
 const H = 720;
 const SHOTS = ['chase', 'heli', 'roadblock', 'finale'];
+const OUT_NAMES = { chase: '1-chase', heli: '2-heli', roadblock: '3-roadblock', finale: '4-finale' };
 
-function lerp(a, b, t) { return a + (b - a) * t; }
-function mixColor(c1, c2, t) {
-  return [Math.round(lerp(c1[0], c2[0], t)), Math.round(lerp(c1[1], c2[1], t)), Math.round(lerp(c1[2], c2[2], t))];
+function blendColors(c1, c2, t) {
+  return [
+    Math.round(c1[0] + (c2[0] - c1[0]) * t),
+    Math.round(c1[1] + (c2[1] - c1[1]) * t),
+    Math.round(c1[2] + (c2[2] - c1[2]) * t),
+  ];
 }
+
 function daylightOf(minutes) {
   if (minutes < 360 || minutes >= 1140) return 0;
   if (minutes < 480) return (minutes - 360) / 120;
   if (minutes < 1020) return 1;
   return 1 - (minutes - 1020) / 120;
+}
+
+function paintSky(canvas, day, dusk) {
+  const top = day > 0.5
+    ? blendColors(hexColor('#7fb2e5'), hexColor('#e8865a'), dusk)
+    : blendColors(hexColor('#0d1026'), hexColor('#e8865a'), dusk);
+  const bottom = day > 0.5
+    ? blendColors(hexColor('#cfe5f5'), hexColor('#f2a56b'), dusk)
+    : blendColors(hexColor('#1c2340'), hexColor('#8a4a5a'), dusk);
+  const bands = 24;
+  for (let i = 0; i < bands; i += 1) {
+    canvas.fillRect(0, Math.floor((H * i) / bands), W, Math.ceil(H / bands) + 1, blendColors(top, bottom, i / bands));
+  }
 }
 
 function paintShot(name) {
@@ -44,14 +62,7 @@ function paintShot(name) {
   const canvas = createCanvas(W, H);
   const day = daylightOf(state.clockMinutes);
   const dusk = Math.max(0, 1 - Math.abs(day - 0.35) / 0.35);
-
-  // Sky: a vertical gradient that follows the clock.
-  const skyTop = day > 0.5 ? mixColor(hexColor('#7fb2e5'), hexColor('#e8865a'), dusk) : mixColor(hexColor('#0d1026'), hexColor('#e8865a'), dusk);
-  const skyBottom = day > 0.5 ? mixColor(hexColor('#cfe5f5'), hexColor('#f2a56b'), dusk) : mixColor(hexColor('#1c2340'), hexColor('#8a4a5a'), dusk);
-  const bands = 32;
-  for (let i = 0; i < bands; i += 1) {
-    canvas.fillRect(0, Math.floor((H * i) / bands), W, Math.ceil(H / bands) + 1, mixColor(skyTop, skyBottom, i / bands));
-  }
+  paintSky(canvas, day, dusk);
 
   const p = state.player;
   const cam = chaseCamera(p.x, p.z, p.angle, p.speed);
@@ -63,17 +74,17 @@ function paintShot(name) {
   const horizonY = horizon ? horizon.y : H * 0.42;
 
   // Ground from the horizon down, tinted by the light.
-  const groundCol = mixColor(hexColor('#39543a'), hexColor('#2a2f33'), 1 - day);
+  const groundCol = blendColors(hexColor('#39543a'), hexColor('#2a2f33'), 1 - day);
   canvas.fillRect(0, Math.max(0, horizonY), W, H - Math.max(0, horizonY), groundCol);
 
   // Dusk sun glow low on the horizon.
   if (dusk > 0.3) {
-    const sunX = W * 0.72;
-    const sunY = horizonY - 40;
-    for (let r = 90; r > 0; r -= 6) {
-      canvas.fillCircle(sunX, sunY, r, [255, 170, 90, Math.round(10 + (90 - r) * 0.12)]);
+    const sunX = W * 0.7;
+    const sunY = horizonY - 36;
+    for (let r = 84; r > 0; r -= 6) {
+      canvas.fillCircle(sunX, sunY, r, [255, 170, 90, Math.round(10 + (84 - r) * 0.13)]);
     }
-    canvas.fillCircle(sunX, sunY, 34, [255, 220, 160]);
+    canvas.fillCircle(sunX, sunY, 32, [255, 220, 160]);
   }
 
   const items = [];
@@ -108,7 +119,7 @@ function paintShot(name) {
   }
 
   // A box (building or car) as its visible faces, far to near.
-  function box(cx, cz, angle, w, h, d, baseCol, topCol) {
+  function drawBox(cx, cz, angle, w, h, d, baseCol, topCol) {
     const hw = w / 2;
     const hd = d / 2;
     const cos = Math.cos(angle);
@@ -150,17 +161,17 @@ function paintShot(name) {
   for (const b of city.buildings) {
     const d = Math.hypot(b.x - p.x, b.z - p.z);
     if (d > 230) continue;
-    const shade = Math.round(120 * b.shade * (0.35 + day * 0.65));
-    const top = Math.min(255, Math.round(150 * b.shade * (0.35 + day * 0.65)));
-    box(b.x, b.z, 0, b.w, b.h, b.d, [shade, Math.round(shade * 0.92), Math.round(shade * 0.85)], [top, top, Math.round(top * 0.95)]);
+    const shade = Math.round(118 * b.shade * (0.4 + day * 0.6));
+    const top = Math.min(255, Math.round(148 * b.shade * (0.4 + day * 0.6)));
+    drawBox(b.x, b.z, 0, b.w, b.h, b.d, [shade, Math.round(shade * 0.92), Math.round(shade * 0.85)], [top, top, Math.round(top * 0.95)]);
   }
 
   // Cars: the player's gold car, traffic, parked cars and cops.
   function drawCar(car, colorHex, isCop) {
     const col = hexColor(colorHex);
     const top = [Math.min(255, col[0] + 40), Math.min(255, col[1] + 40), Math.min(255, col[2] + 40)];
-    box(car.x, car.z, car.angle, 2, 1.1, 4.4, col, top);
-    box(car.x, car.z, car.angle, 1.7, 1.7, 2.2, [28, 39, 51], [40, 55, 70]);
+    drawBox(car.x, car.z, car.angle, 2, 1.1, 4.4, col, top);
+    drawBox(car.x, car.z, car.angle, 1.7, 1.7, 2.2, [28, 39, 51], [40, 55, 70]);
     if (isCop) {
       const s = P(car.x, 2.1, car.z);
       if (s) canvas.fillCircle(s.x, s.y, Math.max(2, screenSize(s.depth, 0.5)), [255, 42, 42]);
@@ -247,15 +258,15 @@ function paintShot(name) {
   // HUD: title, wanted stars, cash, objective, speed.
   const white = [242, 244, 247];
   const gold = [255, 207, 61];
-  drawText(canvas, 'SOLANO HEAT', 28, 24, gold, 3);
+  drawText(canvas, 'SOLANO HEAT', 24, 20, gold, 3);
   const stars = sim.wantedStars();
-  drawText(canvas, `WANTED ${'*'.repeat(stars)}${'-'.repeat(5 - stars)}`, 28, 64, stars >= 4 ? [255, 90, 61] : white, 2);
-  drawText(canvas, `$${state.cash}`, 28, 92, white, 2);
+  drawText(canvas, `WANTED ${'*'.repeat(stars)}${'-'.repeat(5 - stars)}`, 24, 60, stars >= 4 ? [255, 90, 61] : white, 2);
+  drawText(canvas, `$${state.cash}`, 24, 88, white, 2);
   const obj = missions.statusText();
-  if (obj) drawText(canvas, obj.slice(0, 60), 28, H - 56, gold, 2);
+  if (obj) drawText(canvas, obj.slice(0, 60), 24, H - 52, gold, 2);
   const kmh = Math.round(Math.abs(state.player.speed || 0) * 3.6);
-  drawText(canvas, state.car ? `${kmh} KM/H` : 'ON FOOT', W - 260, H - 56, white, 2);
-  drawText(canvas, state.district.toUpperCase(), W - 260, 24, white, 2);
+  drawText(canvas, state.car ? `${kmh} KM/H` : 'ON FOOT', W - 264, H - 52, white, 2);
+  drawText(canvas, state.district.toUpperCase(), W - 264, 20, white, 2);
 
   return { name, png: encodePng(canvas), state };
 }
@@ -264,7 +275,7 @@ const outDir = process.argv[2] ?? 'screenshots';
 mkdirSync(outDir, { recursive: true });
 for (const name of SHOTS) {
   const { png, state } = paintShot(name);
-  const file = join(outDir, `${name === 'chase' ? '1-chase' : name === 'heli' ? '2-heli' : name === 'roadblock' ? '3-roadblock' : '4-finale'}.png`);
+  const file = join(outDir, `${OUT_NAMES[name]}.png`);
   writeFileSync(file, png);
   console.log(`${file}: ${png.length} bytes, wanted ${state.wanted}, clock ${state.clockMinutes}, police ${state.police.length}, heli ${state.heli.active}`);
 }

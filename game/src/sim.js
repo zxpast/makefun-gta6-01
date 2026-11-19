@@ -1,8 +1,8 @@
-// Solano Heat — the rules. No drawing, no DOM, no audio in here: the player
-// on foot or in a car, traffic, pedestrians, police with line of sight, the
-// helicopter, roadblocks, the wanted system, weapons and the garage. step()
-// advances one fixed step and returns event flags; missions.js reads the
-// state and drives objectives from it.
+// Solano Heat — the rules. No drawing, no DOM, no audio in here: the
+// player on foot or in a car, traffic, pedestrians, police with line of
+// sight, the helicopter, roadblocks, the wanted system, weapons and the
+// garage. step() advances one fixed step and returns event flags;
+// missions.js reads the state and drives objectives from it.
 import {
   CAR, CITY, CLOCK, ECONOMY, GARAGE, PED_COUNT, PARKED_COUNT,
   PLAYER, TRAFFIC_COUNT, WANTED, WEAPONS,
@@ -45,7 +45,7 @@ export function createSim(random, city) {
     weapons: { owned: { fists: true }, current: 'fists', ammo: {} },
     upgrades: { armor: false, engine: false, nos: false, nosAmount: 0 },
     marker: null, feed: [], mission: null, sideJob: null,
-    busted: false, dead: false, bustedTimer: 0,
+    busted: false, dead: false, bustedTimer: 0, roadblockTimer: 0,
     stats: { carsStolen: 0, pedsHit: 0, shotsFired: 0, distanceDriven: 0 },
     district: 'Marina',
   };
@@ -92,10 +92,10 @@ export function createSim(random, city) {
   function spawnPeds() {
     state.peds = [];
     for (let i = 0; i < PED_COUNT; i += 1) {
-      const x = random.range(40, CITY.width - 40);
-      const z = random.range(40, CITY.height - 40);
       state.peds.push({
-        x, z, angle: random.range(0, Math.PI * 2),
+        x: random.range(40, CITY.width - 40),
+        z: random.range(40, CITY.height - 40),
+        angle: random.range(0, Math.PI * 2),
         speed: random.range(1, 1.8), down: false, downTimer: 0,
         shirt: random.pick([0xd84a4a, 0x4a7ad8, 0x4ad87a, 0xd8c94a, 0xd8d8d8, 0x8a4ad8]),
       });
@@ -110,6 +110,7 @@ export function createSim(random, city) {
     state.car = null;
     state.police = [];
     state.roadblocks = [];
+    state.roadblockTimer = 0;
     state.heli.active = false;
     state.wanted = 0;
     state.losTimer = 0;
@@ -411,7 +412,7 @@ export function createSim(random, city) {
       return;
     }
     // One fresh block ahead on the player's road, refreshed on a timer.
-    state.roadblockTimer = (state.roadblockTimer ?? 0) - dt;
+    state.roadblockTimer -= dt;
     if (state.roadblocks.length < 2 && state.roadblockTimer <= 0) {
       const p = state.player;
       const aheadX = p.x + Math.sin(p.angle) * 55;
@@ -505,7 +506,10 @@ export function createSim(random, city) {
     if (kind === 'engine' && state.upgrades.engine) { say('Engine already tuned.'); return false; }
     if (kind === 'nos' && state.upgrades.nos) { say('NOS already fitted — use G to refill.'); return false; }
     state.cash -= def.price;
-    if (kind === 'armor') { state.upgrades.armor = true; state.player.health = Math.min(PLAYER.health + GARAGE.armor.bonus, state.player.health + GARAGE.armor.bonus); }
+    if (kind === 'armor') {
+      state.upgrades.armor = true;
+      state.player.health = Math.min(PLAYER.health + GARAGE.armor.bonus, state.player.health + GARAGE.armor.bonus);
+    }
     if (kind === 'engine') state.upgrades.engine = true;
     if (kind === 'nos') { state.upgrades.nos = true; state.upgrades.nosAmount = 100; }
     say(`Bought ${def.name} for $${def.price}.`);
@@ -583,6 +587,8 @@ export function createSim(random, city) {
     state, city, reset, step, earn, addWanted, buyUpgrade, buyAmmo, buyWeapon,
     random, wantedStars, daylight, setMarker(m) { state.marker = m; },
     setClock(hours, minutes) {
+      // Offset-based: the clock keeps advancing from the staged time,
+      // instead of snapping back to the start of the game.
       const target = hours * 60 + minutes;
       state.clockBase = (((target - state.time * CLOCK.minutesPerSecond) % 1440) + 1440) % 1440;
       state.clockMinutes = target;

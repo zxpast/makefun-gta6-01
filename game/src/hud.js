@@ -96,7 +96,7 @@ export function createHud(doc, city) {
     statusEl.textContent = text;
   }
 
-  function showGarage(state, buy) {
+  function showGarage(state) {
     const g = state.upgrades;
     garageEl.innerHTML = `
       <h2>Eastside Garage</h2>
@@ -107,7 +107,6 @@ export function createHud(doc, city) {
       <p>[5] Pistol $300 · [6] SMG $900 · [7] Shotgun $1200</p>
       <p>Ammo: pistol $60 · SMG $120 · shotgun $180 (buy with 5/6/7 when owned)</p>`;
     garageEl.style.display = 'block';
-    garageEl._buy = buy;
   }
 
   function showMissions(missions) {

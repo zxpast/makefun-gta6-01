@@ -33,7 +33,7 @@ export function createInput(target) {
       held.add(code);
     } else if (code === 'Space' || code === 'Enter') actions |= ACTION_CONFIRM;
     else if (code === 'KeyP' || code === 'Escape') actions |= ACTION_PAUSE;
-    else if (code === 'KeyE') actions |= stateHasCar(target) ? ACTION_EXIT : ACTION_ENTER;
+    else if (code === 'KeyE') actions |= stateHasCar() ? ACTION_EXIT : ACTION_ENTER;
     else if (code === 'KeyF') actions |= ACTION_SHOOT;
     else if (code === 'KeyQ') actions |= ACTION_WEAPON;
     else if (code === 'KeyR') actions |= ACTION_RADIO;

@@ -1,1 +1,18 @@
-[{"name":"1-chase.png","query":"?shot=chase&seed=7"},{"name":"2-heli.png","query":"?shot=heli&seed=7"},{"name":"3-roadblock.png","query":"?shot=roadblock&seed=7"},{"name":"4-finale.png","query":"?shot=finale&seed=7"}]
+[
+  {
+    "name": "1-chase.png",
+    "query": "?shot=chase&seed=7"
+  },
+  {
+    "name": "2-heli.png",
+    "query": "?shot=heli&seed=7"
+  },
+  {
+    "name": "3-roadblock.png",
+    "query": "?shot=roadblock&seed=7"
+  },
+  {
+    "name": "4-finale.png",
+    "query": "?shot=finale&seed=7"
+  }
+]

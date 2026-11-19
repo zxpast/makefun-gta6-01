@@ -17,7 +17,7 @@ Port Solano is a 960 by 640 metre open world: six districts (North Hills, Downto
 ## What you can do
 
 - **Explore on foot and by car** — walk, run, steal any parked car (E), drive with real acceleration, braking and steering, NOS boost (Shift, once bought), and lose the cops or outrun them.
-- **Eight story missions** — a first car theft, a courier run, a gang pickup, a getaway, a turf takeover, the timed **Midnight Run** (Docks to North Hills in 90 seconds), the stealth **Silent Pickup** (bring the handoff home with zero wanted stars — arrive hot and the deal is off), and the finale **The Night Job** (150 seconds, helicopter overhead, roadblocks ahead).
+- **Eight story missions** — a first car theft, a courier run, a gang pickup, a getaway, a turf takeover, the timed **Midnight Run** (Docks to North Hills in 90 seconds), the stealth **Silent Pickup** (bring the handoff home with zero wanted stars — arrive hot and the deal is off), and the finale **The Night Job** (one package, a helicopter overhead, roadblocks ahead).
 - **Side jobs** — taxi fares, courier drops, vigilante takedowns and repo runs (steal a car, deliver it to the Eastside Garage, $500).
 - **Wanted system** — 0 to 5 stars. Steal, hit or shoot and the heat rises; police cars chase, ram and bust you. At 4–5 stars a police helicopter joins with a spotlight and roadblocks go up on the roads ahead. Break line of sight for six seconds and the cops lose your trail; lay low and the stars fade.
 - **Combat** — fists on foot (Space), and three guns (F): pistol, SMG and shotgun, with drive-by shooting from the car. Buy ammo at the garage.
