@@ -1,172 +1,232 @@
-// Port Solano's map: a 120 m road grid, six districts, procedural towers
-// and the named places the missions point at. Pure data and geometry — no
-// DOM, no Three.js — so the sim, the autopilot and the Node screenshot
-// painter all share exactly the same city.
-import { CITY, DISTRICTS } from './config.js';
+// Port Solano: a road grid, six districts, the buildings that fill the blocks,
+// and the road graph the autopilot drives on. Everything is dealt once from
+// the seeded random source, so the same seed builds the same city.
 
-const VERTICALS = [60, 180, 300, 420, 540, 660, 780, 900];
-const HORIZONTALS = [60, 180, 300, 420, 540];
+import { DISTRICTS, GRID, WORLD } from './config.js';
 
-export function buildCity(random) {
-  const buildings = [];
-  // One lot per block between four roads; each lot holds 1–3 towers whose
-  // height grows toward Downtown, so the skyline reads from anywhere.
-  for (let ix = 0; ix < VERTICALS.length - 1; ix += 1) {
-    for (let iz = 0; iz < HORIZONTALS.length - 1; iz += 1) {
-      const x0 = VERTICALS[ix] + 14;
-      const x1 = VERTICALS[ix + 1] - 14;
-      const z0 = HORIZONTALS[iz] + 14;
-      const z1 = HORIZONTALS[iz + 1] - 14;
-      const cx = (VERTICALS[ix] + VERTICALS[ix + 1]) / 2;
-      const cz = (HORIZONTALS[iz] + HORIZONTALS[iz + 1]) / 2;
-      const downtown = Math.hypot(cx - 720, cz - 120);
-      const tall = Math.max(0, 1 - downtown / 520);
-      const count = random.int(1, 3);
-      for (let k = 0; k < count; k += 1) {
-        const w = random.range(16, 34);
-        const d = random.range(16, 34);
-        buildings.push({
-          x: random.range(x0 + w / 2, x1 - w / 2),
-          z: random.range(z0 + d / 2, z1 - d / 2),
-          w, d,
-          h: 8 + random.range(0, 26) + tall * random.range(10, 42),
-          shade: random.range(0.75, 1.15),
-        });
-      }
-    }
-  }
+/** Avenue x coordinates, west to east. */
+export const AVENUES = [];
+for (let x = GRID.spacing / 2; x < WORLD.width; x += GRID.spacing) AVENUES.push(x);
 
-  const places = {
-    garage: { x: 700, z: 300, name: 'Eastside Garage' },
-    safehouse: { x: 600, z: 540, name: 'Marina Safehouse' },
-    pier: { x: 120, z: 540, name: 'Sunset Pier' },
-    docks: { x: 840, z: 540, name: 'The Docks' },
-    downtown: { x: 720, z: 180, name: 'Downtown Plaza' },
-    hills: { x: 180, z: 60, name: 'North Hills' },
-    hospital: { x: 420, z: 180, name: 'Solano General' },
-    market: { x: 300, z: 420, name: 'Pier Market' },
+/** Street z coordinates, north to south. */
+export const STREETS = [];
+for (let z = GRID.spacing / 2; z < WORLD.height; z += GRID.spacing) STREETS.push(z);
+
+/** Half a road's width, plus the kerb. */
+const ROAD_HALF = GRID.roadWidth / 2;
+
+/** A building: a box on the ground, x/z bounds with a height. */
+function makeBuilding(rng, x0, z0, x1, z1) {
+  return {
+    x0,
+    z0,
+    x1,
+    z1,
+    h: rng.range(9, 42),
+    lit: rng.chance(0.45),
+    shade: rng.range(0.82, 1.08),
   };
-
-  return { verticals: VERTICALS, horizontals: HORIZONTALS, buildings, places };
 }
 
-export function districtAt(x, z) {
-  for (const d of DISTRICTS) {
-    if (x >= d.x0 && x < d.x1 && z >= d.z0 && z < d.z1) return d.name;
-  }
-  return 'Port Solano';
-}
-
-export function nearestVertical(x) {
-  let best = VERTICALS[0];
-  for (const v of VERTICALS) if (Math.abs(v - x) < Math.abs(best - x)) best = v;
-  return best;
-}
-
-export function nearestHorizontal(z) {
-  let best = HORIZONTALS[0];
-  for (const h of HORIZONTALS) if (Math.abs(h - z) < Math.abs(best - h)) best = h;
-  return best;
-}
-
-export function onRoad(x, z) {
-  return Math.abs(x - nearestVertical(x)) <= CITY.roadHalf + 2
-    || Math.abs(z - nearestHorizontal(z)) <= CITY.roadHalf + 2;
-}
-
-function segmentHitsRect(ax, az, bx, bz, r) {
-  // Slab test: does segment AB cross the rectangle, with a 1 m margin?
-  const minX = r.x - r.w / 2 - 1;
-  const maxX = r.x + r.w / 2 + 1;
-  const minZ = r.z - r.d / 2 - 1;
-  const maxZ = r.z + r.d / 2 + 1;
+/** Whether the 2D segment (ax,az)-(bx,bz) crosses the building's footprint. */
+function segmentHitsBox(ax, az, bx, bz, b) {
   const dx = bx - ax;
   const dz = bz - az;
   let t0 = 0;
   let t1 = 1;
-  if (Math.abs(dx) < 1e-9) {
-    if (ax < minX || ax > maxX) return false;
-  } else {
-    let a = (minX - ax) / dx;
-    let b = (maxX - ax) / dx;
-    if (a > b) [a, b] = [b, a];
-    t0 = Math.max(t0, a);
-    t1 = Math.min(t1, b);
-    if (t0 > t1) return false;
-  }
-  if (Math.abs(dz) < 1e-9) {
-    if (az < minZ || az > maxZ) return false;
-  } else {
-    let a = (minZ - az) / dz;
-    let b = (maxZ - az) / dz;
-    if (a > b) [a, b] = [b, a];
-    t0 = Math.max(t0, a);
-    t1 = Math.min(t1, b);
-    if (t0 > t1) return false;
+  for (const [p, q] of [[-dx, ax - b.x0], [dx, b.x1 - ax], [-dz, az - b.z0], [dz, b.z1 - az]]) {
+    if (p === 0) {
+      if (q < 0) return false;
+      continue;
+    }
+    const t = q / p;
+    if (p < 0) {
+      if (t > t1) return false;
+      if (t > t0) t0 = t;
+    } else {
+      if (t < t0) return false;
+      if (t < t1) t1 = t;
+    }
   }
   return true;
 }
 
-/** True when no building stands between the two points (2D, height ignored). */
-export function hasLineOfSight(city, ax, az, bx, bz) {
-  for (const b of city.buildings) {
-    if (segmentHitsRect(ax, az, bx, bz, b)) return false;
-  }
-  return true;
-}
-
-function nodeId(ix, iz) { return iz * VERTICALS.length + ix; }
-
-/** Breadth-first route over the intersections, as {x, z} waypoints. */
-export function routeBetween(ax, az, bx, bz) {
-  const startX = VERTICALS.indexOf(nearestVertical(ax));
-  const startZ = HORIZONTALS.indexOf(nearestHorizontal(az));
-  const endX = VERTICALS.indexOf(nearestVertical(bx));
-  const endZ = HORIZONTALS.indexOf(nearestHorizontal(bz));
-  const start = nodeId(startX, startZ);
-  const goal = nodeId(endX, endZ);
-  const prev = new Map([[start, -1]]);
-  const queue = [start];
-  while (queue.length > 0) {
-    const cur = queue.shift();
-    if (cur === goal) break;
-    const cx = cur % VERTICALS.length;
-    const cz = Math.floor(cur / VERTICALS.length);
-    for (const [nx, nz] of [[cx + 1, cz], [cx - 1, cz], [cx, cz + 1], [cx, cz - 1]]) {
-      if (nx < 0 || nx >= VERTICALS.length || nz < 0 || nz >= HORIZONTALS.length) continue;
-      const nid = nodeId(nx, nz);
-      if (!prev.has(nid)) {
-        prev.set(nid, cur);
-        queue.push(nid);
+export function createCity(rng) {
+  const buildings = [];
+  // One or two buildings per block, inset from the roads.
+  for (let ai = 0; ai < AVENUES.length - 1; ai += 1) {
+    for (let si = 0; si < STREETS.length - 1; si += 1) {
+      const bx0 = AVENUES[ai] + ROAD_HALF + 2;
+      const bx1 = AVENUES[ai + 1] - ROAD_HALF - 2;
+      const bz0 = STREETS[si] + ROAD_HALF + 2;
+      const bz1 = STREETS[si + 1] - ROAD_HALF - 2;
+      const count = rng.int(1, 2);
+      if (count === 1) {
+        buildings.push(makeBuilding(rng, bx0, bz0, bx1, bz1));
+      } else {
+        const split = rng.chance(0.5);
+        if (split) {
+          const mid = (bx0 + bx1) / 2;
+          buildings.push(makeBuilding(rng, bx0, bz0, mid - 2, bz1));
+          buildings.push(makeBuilding(rng, mid + 2, bz0, bx1, bz1));
+        } else {
+          const mid = (bz0 + bz1) / 2;
+          buildings.push(makeBuilding(rng, bx0, bz0, bx1, mid - 2));
+          buildings.push(makeBuilding(rng, bx0, mid + 2, bx1, bz1));
+        }
       }
     }
   }
-  if (!prev.has(goal)) return [{ x: bx, z: bz }];
-  const path = [];
-  let cur = goal;
-  while (cur !== -1) {
-    path.push({ x: VERTICALS[cur % VERTICALS.length], z: HORIZONTALS[Math.floor(cur / VERTICALS.length)] });
-    cur = prev.get(cur);
-  }
-  path.reverse();
-  const lastNode = path[path.length - 1];
-  if (!lastNode || lastNode.x !== bx || lastNode.z !== bz) path.push({ x: bx, z: bz });
-  return path;
-}
 
-/** Clamp a point into the city and push it out of any building footprint. */
-export function resolveCollision(city, x, z, radius) {
-  let nx = Math.min(CITY.width - 4, Math.max(4, x));
-  let nz = Math.min(CITY.height - 4, Math.max(4, z));
-  for (const b of city.buildings) {
-    const dx = nx - b.x;
-    const dz = nz - b.z;
-    const ox = b.w / 2 + radius - Math.abs(dx);
-    const oz = b.d / 2 + radius - Math.abs(dz);
-    if (ox > 0 && oz > 0) {
-      if (ox < oz) nx = b.x + (dx > 0 ? 1 : -1) * (b.w / 2 + radius);
-      else nz = b.z + (dz > 0 ? 1 : -1) * (b.d / 2 + radius);
+  // Named places the missions and the garage use.
+  const places = {
+    garage: { name: 'Eastside Garage', x: 760, z: 280 },
+    docks: { name: 'The Docks', x: 120, z: 520 },
+    northHills: { name: 'North Hills', x: 200, z: 120 },
+    pier: { name: 'Sunset Pier', x: 120, z: 360 },
+    marina: { name: 'Marina', x: 440, z: 360 },
+    downtown: { name: 'Downtown', x: 680, z: 120 },
+    eastside: { name: 'Eastside', x: 840, z: 280 },
+    safehouse: { name: 'Safehouse', x: 360, z: 200 },
+  };
+
+  // Parked cars wait along the roads, just off the driving line.
+  const parked = [];
+  for (let i = 0; i < 26; i += 1) {
+    const onAvenue = rng.chance(0.5);
+    if (onAvenue) {
+      const x = rng.pick(AVENUES) + rng.pick([-1, 1]) * (ROAD_HALF - 1.2);
+      const z = rng.range(60, WORLD.height - 60);
+      parked.push({ x, z, angle: rng.pick([0, Math.PI]) });
+    } else {
+      const z = rng.pick(STREETS) + rng.pick([-1, 1]) * (ROAD_HALF - 1.2);
+      const x = rng.range(60, WORLD.width - 60);
+      parked.push({ x, z, angle: rng.pick([Math.PI / 2, -Math.PI / 2]) });
     }
   }
-  return { x: nx, z: nz };
+
+  /** The nearest intersection to a point. */
+  function nearestNode(x, z) {
+    let best = null;
+    let bestD = Infinity;
+    for (const ax of AVENUES) {
+      for (const sz of STREETS) {
+        const d = (ax - x) * (ax - x) + (sz - z) * (sz - z);
+        if (d < bestD) {
+          bestD = d;
+          best = { x: ax, z: sz };
+        }
+      }
+    }
+    return best;
+  }
+
+  /** A breadth-first route along the grid from one point to another. */
+  function route(fromX, fromZ, toX, toZ) {
+    const start = nearestNode(fromX, fromZ);
+    const goal = nearestNode(toX, toZ);
+    const key = (p) => `${p.x},${p.z}`;
+    const prev = new Map();
+    const seen = new Set([key(start)]);
+    const queue = [start];
+    // An index, not shift(): shift() re-indexes the whole array on every
+    // dequeue, which turns a 96-node BFS quadratic for no reason.
+    for (let qi = 0; qi < queue.length; qi += 1) {
+      const cur = queue[qi];
+      if (cur.x === goal.x && cur.z === goal.z) break;
+      const ai = AVENUES.indexOf(cur.x);
+      const si = STREETS.indexOf(cur.z);
+      const nexts = [];
+      if (ai > 0) nexts.push({ x: AVENUES[ai - 1], z: cur.z });
+      if (ai < AVENUES.length - 1) nexts.push({ x: AVENUES[ai + 1], z: cur.z });
+      if (si > 0) nexts.push({ x: cur.x, z: STREETS[si - 1] });
+      if (si < STREETS.length - 1) nexts.push({ x: cur.x, z: STREETS[si + 1] });
+      for (const n of nexts) {
+        if (seen.has(key(n))) continue;
+        seen.add(key(n));
+        prev.set(key(n), cur);
+        queue.push(n);
+      }
+    }
+    const path = [goal];
+    let cur = goal;
+    while (!(cur.x === start.x && cur.z === start.z)) {
+      const p = prev.get(key(cur));
+      if (!p) break;
+      path.unshift(p);
+      cur = p;
+    }
+    path.push({ x: toX, z: toZ });
+    return path;
+  }
+
+  return {
+    buildings,
+    places,
+    parked,
+    avenues: AVENUES,
+    streets: STREETS,
+
+    /** The district a point sits in. */
+    districtAt(x, z) {
+      for (const d of DISTRICTS) {
+        if (x >= d.x0 && x < d.x1 && z >= d.z0 && z < d.z1) return d.name;
+      }
+      return DISTRICTS[0].name;
+    },
+
+    /** Whether a point is inside a building's footprint (with padding). */
+    inBuilding(x, z, pad = 0) {
+      for (const b of buildings) {
+        if (x > b.x0 - pad && x < b.x1 + pad && z > b.z0 - pad && z < b.z1 + pad) return true;
+      }
+      return false;
+    },
+
+    /** Whether any building stands between two points (line of sight). */
+    blockedBetween(ax, az, bx, bz) {
+      for (const b of buildings) {
+        if (segmentHitsBox(ax, az, bx, bz, b)) return true;
+      }
+      return false;
+    },
+
+    /** The nearest point on a road centreline to (x, z). */
+    nearestRoadPoint(x, z) {
+      let bestX = AVENUES[0];
+      let bestD = Infinity;
+      for (const ax of AVENUES) {
+        const d = Math.abs(ax - x);
+        if (d < bestD) {
+          bestD = d;
+          bestX = ax;
+        }
+      }
+      let bestZ = STREETS[0];
+      bestD = Infinity;
+      for (const sz of STREETS) {
+        const d = Math.abs(sz - z);
+        if (d < bestD) {
+          bestD = d;
+          bestZ = sz;
+        }
+      }
+      const dx = Math.abs(bestX - x);
+      const dz = Math.abs(bestZ - z);
+      return dx <= dz ? { x: bestX, z } : { x, z: bestZ };
+    },
+
+    /** A point ahead of (x, z) along `angle`, snapped onto a road. */
+    pointAhead(x, z, angle, distance) {
+      const px = x + Math.sin(angle) * distance;
+      const pz = z + Math.cos(angle) * distance;
+      return this.nearestRoadPoint(
+        Math.max(20, Math.min(WORLD.width - 20, px)),
+        Math.max(20, Math.min(WORLD.height - 20, pz)),
+      );
+    },
+
+    nearestNode,
+    route,
+  };
 }

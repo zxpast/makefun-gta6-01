@@ -17,8 +17,8 @@ Port Solano is a 960 by 640 metre open world: six districts (North Hills, Downto
 ## What you can do
 
 - **Explore on foot and by car** — walk, run, steal any parked car (E), drive with real acceleration, braking and steering, NOS boost (Shift, once bought), and lose the cops or outrun them.
-- **Eight story missions** — a first car theft, a courier run, a gang pickup, a getaway, a turf takeover, the timed **Midnight Run** (Docks to North Hills in 90 seconds), the stealth **Silent Pickup** (bring the handoff home with zero wanted stars — arrive hot and the deal is off), and the finale **The Night Job** (one package, a helicopter overhead, roadblocks ahead).
-- **Side jobs** — taxi fares, courier drops, vigilante takedowns and repo runs (steal a car, deliver it to the Eastside Garage, $500).
+- **Eight story missions** — a first car theft, a courier run, a gang pickup, a getaway, a turf takeover, the timed **Midnight Run** (Docks to North Hills in 90 seconds), the stealth **Silent Pickup** (bring the handoff home with zero wanted stars — arrive hot and the deal is off), and the finale **The Night Job** (150 seconds, helicopter overhead, roadblocks ahead).
+- **Side jobs** — taxi fares, courier drops, vigilante takedowns and repo runs (steal a car, deliver it to the Eastside Garage, $250).
 - **Wanted system** — 0 to 5 stars. Steal, hit or shoot and the heat rises; police cars chase, ram and bust you. At 4–5 stars a police helicopter joins with a spotlight and roadblocks go up on the roads ahead. Break line of sight for six seconds and the cops lose your trail; lay low and the stars fade.
 - **Combat** — fists on foot (Space), and three guns (F): pistol, SMG and shotgun, with drive-by shooting from the car. Buy ammo at the garage.
 - **Radio** — three WebAudio stations (R to change): SOL FM, NEON NIGHTS, PIER TALK. All music is synthesised live; there are no audio files.
@@ -39,8 +39,7 @@ Port Solano is a 960 by 640 metre open world: six districts (North Hills, Downto
 | R | Change radio station |
 | G | Garage (at the Eastside Garage) |
 | M | Missions and side jobs |
-| 1–4 | Take a side job / buy in the garage |
-| 5–7 | Buy pistol / SMG / shotgun in the garage |
+| 1–8 | Take a chapter / buy in the garage |
 | P / Esc | Pause |
 | N | Sound on / off |
 
@@ -49,6 +48,10 @@ Port Solano is a 960 by 640 metre open world: six districts (North Hills, Downto
 Serve `game/` with any static server — `node serve.ts` then open http://localhost:8080 — and play in desktop Chrome. No network request is made; every file the game loads sits under `game/`.
 
 Screenshots are renders of the game's own code: the browser stages each scene with `?shot=chase|heli|roadblock|finale` (seed 7), and `shots/render-shots.mjs` paints the same staged states with the same chase camera in Node. Nothing is edited, composited or borrowed.
+
+## Verification
+
+`node test/sim-test.mjs` — 74 checks, all passing: determinism, stealing and driving, weapons and garage, police/wanted/helicopter/roadblocks, all eight chapters, staged scenes, and save round-trips. The autopilot finishes the full story (all eight chapters, no bust or death) in about 814 seconds of game time and ends with $4,950. `node shots/render-shots.mjs` renders the four screenshots (1280×720, each under 256 KiB). `MAKEFUN_OUTPUT_DIR=out node main.ts` builds the dossier twice byte-identically; the dossier text is 106,472 characters against a 163,840 cap.
 
 ## Structure
 

@@ -1,281 +1,268 @@
 // Solano Heat — the Node screenshot painter. It stages the same four
-// scenes the browser stages (same seed, same autopilot, same rules) and
-// paints them with the same chase camera, in the same 1280x720 frame the
-// player sees: sky, roads, towers, cars, cops, the helicopter and its
-// spotlight, roadblocks, the mission beam and the HUD. Nothing is edited
-// or borrowed — every pixel comes from the game's own state.
+// scenes the browser stages (game/src/shots.js, seed 7) and paints them
+// with the same chase camera (game/src/camera3d.js), so each screenshot is
+// a frame of the game's own rules: same city, same cars, same cops, same
+// helicopter, same clock. The browser renders with Three.js; this paints
+// the same state with a software renderer, because this machine has no
+// WebGL. Nothing is edited, composited or borrowed.
 //
-//   node shots/render-shots.mjs [out-dir]
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { createRandom } from '../game/src/random.js';
-import { buildCity } from '../game/src/city.js';
+//   node shots/render-shots.mjs
+// Reads shots.json beside the repo root and writes screenshots/<name>.png.
+
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createSim } from '../game/src/sim.js';
 import { createMissions } from '../game/src/missions.js';
 import { stageShot } from '../game/src/shots.js';
-import { chaseCamera, project, screenSize } from '../game/src/camera3d.js';
-import { CITY } from '../game/src/config.js';
-import { createCanvas, hexColor } from './canvas.mjs';
-import { drawText } from './font.mjs';
+import { cameraForward, createCamera, projectPoint } from '../game/src/camera3d.js';
+import { PALETTE, RADIO, WEAPONS, WORLD } from '../game/src/config.js';
+import { Canvas, drawText, hexToRgb, lerpColor, shade, textWidth } from './canvas.mjs';
 import { encodePng } from './png.mjs';
 
-const W = 1280;
-const H = 720;
-const SHOTS = ['chase', 'heli', 'roadblock', 'finale'];
-const OUT_NAMES = { chase: '1-chase', heli: '2-heli', roadblock: '3-roadblock', finale: '4-finale' };
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const WIDTH = 1280;
+const HEIGHT = 720;
+const ROAD_HALF = 5;
 
-function blendColors(c1, c2, t) {
-  return [
-    Math.round(c1[0] + (c2[0] - c1[0]) * t),
-    Math.round(c1[1] + (c2[1] - c1[1]) * t),
-    Math.round(c1[2] + (c2[2] - c1[2]) * t),
+const scenes = JSON.parse(readFileSync(join(root, 'shots.json'), 'utf8'));
+
+/** Project a world point to [x, y] screen pixels; null when behind the camera. */
+function point(camera, x, y, z) {
+  const p = projectPoint({ x, y, z }, camera.eye, camera.target, WIDTH, HEIGHT);
+  return p === null ? null : [p.x, p.y];
+}
+
+/** Draw one axis-aligned box standing on the ground, seen from `camera`. */
+function drawBox(canvas, camera, cx, cz, w, h, d, angle, color, roof = null) {
+  const hw = w / 2;
+  const hd = d / 2;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const corners = [];
+  for (const [sx, sy, sz] of [
+    [-hw, 0, -hd], [hw, 0, -hd], [hw, 0, hd], [-hw, 0, hd],
+    [-hw, h, -hd], [hw, h, -hd], [hw, h, hd], [-hw, h, hd],
+  ]) {
+    corners.push({ x: cx + sx * cos + sz * sin, y: sy, z: cz - sx * sin + sz * cos });
+  }
+  const eye = camera.eye;
+  const faces = [
+    { idx: [4, 5, 6, 7], normal: [0, 1, 0], factor: 1.15 }, // roof
+    { idx: [1, 2, 6, 5], normal: [cos, 0, -sin], factor: 0.72 }, // +x side
+    { idx: [3, 0, 4, 7], normal: [-cos, 0, sin], factor: 0.72 }, // -x side
+    { idx: [2, 3, 7, 6], normal: [sin, 0, cos], factor: 0.55 }, // +z side
+    { idx: [0, 1, 5, 4], normal: [-sin, 0, -cos], factor: 0.55 }, // -z side
   ];
-}
-
-function daylightOf(minutes) {
-  if (minutes < 360 || minutes >= 1140) return 0;
-  if (minutes < 480) return (minutes - 360) / 120;
-  if (minutes < 1020) return 1;
-  return 1 - (minutes - 1020) / 120;
-}
-
-function paintSky(canvas, day, dusk) {
-  const top = day > 0.5
-    ? blendColors(hexColor('#7fb2e5'), hexColor('#e8865a'), dusk)
-    : blendColors(hexColor('#0d1026'), hexColor('#e8865a'), dusk);
-  const bottom = day > 0.5
-    ? blendColors(hexColor('#cfe5f5'), hexColor('#f2a56b'), dusk)
-    : blendColors(hexColor('#1c2340'), hexColor('#8a4a5a'), dusk);
-  const bands = 24;
-  for (let i = 0; i < bands; i += 1) {
-    canvas.fillRect(0, Math.floor((H * i) / bands), W, Math.ceil(H / bands) + 1, blendColors(top, bottom, i / bands));
+  const drawn = [];
+  for (const face of faces) {
+    const centre = { x: 0, y: 0, z: 0 };
+    for (const i of face.idx) {
+      centre.x += corners[i].x / 4;
+      centre.y += corners[i].y / 4;
+      centre.z += corners[i].z / 4;
+    }
+    const toEye = [eye.x - centre.x, eye.y - centre.y, eye.z - centre.z];
+    if (face.normal[0] * toEye[0] + face.normal[1] * toEye[1] + face.normal[2] * toEye[2] <= 0) continue;
+    const projected = face.idx.map((i) => point(camera, corners[i].x, corners[i].y, corners[i].z));
+    if (projected.some((p) => p === null)) continue;
+    const depth = Math.hypot(centre.x - eye.x, centre.y - eye.y, centre.z - eye.z);
+    drawn.push({ projected, depth, face });
+  }
+  drawn.sort((a, b) => b.depth - a.depth);
+  for (const { projected, face } of drawn) {
+    const fill = face.idx[0] === 4 && roof ? roof : color;
+    canvas.fillPolygon(projected, shade(fill, face.factor));
   }
 }
 
-function paintShot(name) {
-  const random = createRandom(7);
-  const city = buildCity(random);
-  const sim = createSim(random, city);
+/** A flat quad on the ground (a road segment). */
+function drawGroundQuad(canvas, camera, x0, z0, x1, z1, color) {
+  const projected = [
+    point(camera, x0, 0.02, z0),
+    point(camera, x1, 0.02, z0),
+    point(camera, x1, 0.02, z1),
+    point(camera, x0, 0.02, z1),
+  ];
+  if (projected.some((p) => p === null)) return;
+  canvas.fillPolygon(projected, color);
+}
+
+function drawStar(canvas, cx, cy, r, filled, color) {
+  const pts = [];
+  for (let i = 0; i < 10; i += 1) {
+    const angle = -Math.PI / 2 + (i * Math.PI) / 5;
+    const rad = i % 2 === 0 ? r : r * 0.45;
+    pts.push([cx + Math.cos(angle) * rad, cy + Math.sin(angle) * rad]);
+  }
+  if (filled) canvas.fillPolygon(pts, color);
+  else canvas.strokePolygon(pts, color);
+}
+
+function clockText(minutes) {
+  const h = Math.floor(minutes / 60) % 24;
+  const m = Math.floor(minutes % 60);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+function renderScene(name, seed) {
+  const sim = createSim(seed);
   const missions = createMissions(sim);
   stageShot(name, sim, missions);
-  const state = sim.state;
-  const canvas = createCanvas(W, H);
-  const day = daylightOf(state.clockMinutes);
-  const dusk = Math.max(0, 1 - Math.abs(day - 0.35) / 0.35);
-  paintSky(canvas, day, dusk);
+  const camera = createCamera();
+  camera.snap(sim);
+  const s = sim.state;
+  const daylight = sim.daylight();
+  const canvas = new Canvas(WIDTH, HEIGHT);
 
-  const p = state.player;
-  const cam = chaseCamera(p.x, p.z, p.angle, p.speed);
-  const horizon = project(cam.eye, cam.target, {
-    x: cam.eye.x + (cam.target.x - cam.eye.x) * 400,
-    y: cam.eye.y,
-    z: cam.eye.z + (cam.target.z - cam.eye.z) * 400,
-  });
-  const horizonY = horizon ? horizon.y : H * 0.42;
-
-  // Ground from the horizon down, tinted by the light.
-  const groundCol = blendColors(hexColor('#39543a'), hexColor('#2a2f33'), 1 - day);
-  canvas.fillRect(0, Math.max(0, horizonY), W, H - Math.max(0, horizonY), groundCol);
-
-  // Dusk sun glow low on the horizon.
-  if (dusk > 0.3) {
-    const sunX = W * 0.7;
-    const sunY = horizonY - 36;
-    for (let r = 84; r > 0; r -= 6) {
-      canvas.fillCircle(sunX, sunY, r, [255, 170, 90, Math.round(10 + (84 - r) * 0.13)]);
-    }
-    canvas.fillCircle(sunX, sunY, 32, [255, 220, 160]);
+  // Sky: bands from the zenith to the horizon, coloured by the time of day.
+  const top = lerpColor('#0b1026', '#3d7ac8', daylight);
+  const horizon = lerpColor('#1a2440', daylight > 0.45 ? '#ffd76a' : '#ff8c42', Math.min(1, daylight * 1.4));
+  const forward = cameraForward(camera);
+  const far = point(camera, camera.eye.x + forward.x * 900, camera.eye.y, camera.eye.z + forward.z * 900);
+  const horizonY = Math.round(far ? far[1] : HEIGHT * 0.42);
+  canvas.vband(0, horizonY, top, horizon);
+  // The sun, low and bright toward evening.
+  if (daylight > 0.05) {
+    canvas.circle(WIDTH * 0.74, HEIGHT * 0.15, 44, daylight > 0.45 ? '#ffd76a' : '#ff8c42', 0.25);
+    canvas.circle(WIDTH * 0.74, HEIGHT * 0.15, 30, daylight > 0.45 ? '#ffd76a' : '#ff8c42');
   }
+  // Ground from the horizon down.
+  canvas.fillRect(0, horizonY, WIDTH, HEIGHT - horizonY, PALETTE.sidewalk);
 
-  const items = [];
-  const P = (x, y, z) => project(cam.eye, cam.target, { x, y, z });
-
-  // Roads near the player, as projected quads. A road is drawn in short
-  // 20 m segments: one long quad always has an end behind the camera,
-  // which projects to null and drops the whole road from the frame.
-  const near = 190;
-  const SEG = 20;
-  for (const x of city.verticals) {
-    if (Math.abs(x - p.x) > near) continue;
-    for (let z0 = Math.max(0, p.z - near); z0 < Math.min(CITY.height, p.z + near); z0 += SEG) {
-      const z1 = Math.min(CITY.height, p.z + near, z0 + SEG);
-      const a = P(x - 7, 0.1, z0);
-      const b = P(x + 7, 0.1, z0);
-      const c = P(x + 7, 0.1, z1);
-      const d = P(x - 7, 0.1, z1);
-      if (a && b && c && d) items.push({ depth: (a.depth + c.depth) / 2, pts: [a, b, c, d], col: hexColor('#2b2f36') });
+  // Roads, in 20 m segments so they vanish at the horizon instead of
+  // stretching through it.
+  for (const x of sim.city.avenues) {
+    for (let z = 0; z < WORLD.height; z += 20) {
+      drawGroundQuad(canvas, camera, x - ROAD_HALF, z, x + ROAD_HALF, Math.min(z + 20, WORLD.height), PALETTE.road);
     }
   }
-  for (const z of city.horizontals) {
-    if (Math.abs(z - p.z) > near) continue;
-    for (let x0 = Math.max(0, p.x - near); x0 < Math.min(CITY.width, p.x + near); x0 += SEG) {
-      const x1 = Math.min(CITY.width, p.x + near, x0 + SEG);
-      const a = P(x0, 0.1, z - 7);
-      const b = P(x1, 0.1, z - 7);
-      const c = P(x1, 0.1, z + 7);
-      const d = P(x0, 0.1, z + 7);
-      if (a && b && c && d) items.push({ depth: (a.depth + c.depth) / 2, pts: [a, b, c, d], col: hexColor('#2b2f36') });
+  for (const z of sim.city.streets) {
+    for (let x = 0; x < WORLD.width; x += 20) {
+      drawGroundQuad(canvas, camera, x, z - ROAD_HALF, Math.min(x + 20, WORLD.width), z + ROAD_HALF, PALETTE.road);
     }
   }
 
-  // A box (building or car) as its visible faces, far to near.
-  function drawBox(cx, cz, angle, w, h, d, baseCol, topCol) {
-    const hw = w / 2;
-    const hd = d / 2;
-    const cos = Math.cos(angle);
-    const sin = Math.sin(angle);
-    const corner = (lx, ly, lz) => ({
-      x: cx + lx * cos + lz * sin,
-      y: ly,
-      z: cz - lx * sin + lz * cos,
+  // Everything standing, far to near: buildings, parked cars, traffic,
+  // pedestrians, police, roadblocks, the helicopter, the player.
+  const drawables = [];
+  for (const b of sim.city.buildings) {
+    const base = shade(PALETTE.building, b.shade);
+    const lit = hexToRgb(PALETTE.buildingLit);
+    const color = b.lit ? [base[0] + (lit[0] - base[0]) * 0.25, base[1] + (lit[1] - base[1]) * 0.25, base[2] + (lit[2] - base[2]) * 0.25] : base;
+    drawables.push({ depth: Math.hypot((b.x0 + b.x1) / 2 - camera.eye.x, (b.z0 + b.z1) / 2 - camera.eye.z), draw: () => drawBox(canvas, camera, (b.x0 + b.x1) / 2, (b.z0 + b.z1) / 2, b.x1 - b.x0, b.h, b.z1 - b.z0, 0, color) });
+  }
+  for (const car of s.parkedCars) {
+    if (car.stolen) continue;
+    drawables.push({ depth: Math.hypot(car.x - camera.eye.x, car.z - camera.eye.z), draw: () => drawBox(canvas, camera, car.x, car.z, 4.4, 1.35, 2.0, car.angle, car.color) });
+  }
+  for (const car of s.traffic) {
+    drawables.push({ depth: Math.hypot(car.x - camera.eye.x, car.z - camera.eye.z), draw: () => drawBox(canvas, camera, car.x, car.z, 4.4, 1.35, 2.0, car.angle, car.color) });
+  }
+  for (const ped of s.peds) {
+    if (ped.down > 0) continue;
+    drawables.push({ depth: Math.hypot(ped.x - camera.eye.x, ped.z - camera.eye.z), draw: () => drawBox(canvas, camera, ped.x, ped.z, 0.5, 1.8, 0.5, ped.angle, PALETTE.ped) });
+  }
+  for (const cop of s.police) {
+    drawables.push({
+      depth: Math.hypot(cop.x - camera.eye.x, cop.z - camera.eye.z),
+      draw: () => {
+        drawBox(canvas, camera, cop.x, cop.z, 4.4, 1.5, 2.0, cop.angle, '#e8e8e8');
+        const roof = point(camera, cop.x, 1.55, cop.z);
+        if (roof) {
+          canvas.circle(roof[0] - 5, roof[1], 3, '#ff3b30');
+          canvas.circle(roof[0] + 5, roof[1], 3, '#2f7bff');
+        }
+      },
     });
-    const cs = [
-      corner(-hw, 0, -hd), corner(hw, 0, -hd), corner(hw, 0, hd), corner(-hw, 0, hd),
-      corner(-hw, h, -hd), corner(hw, h, -hd), corner(hw, h, hd), corner(-hw, h, hd),
-    ];
-    const ps = cs.map((c) => P(c.x, c.y, c.z));
-    const faces = [
-      { pts: [ps[4], ps[5], ps[6], ps[7]], col: topCol, n: [0, 1, 0] },
-      { pts: [ps[1], ps[2], ps[6], ps[5]], col: baseCol, n: [1, 0, 0] },
-      { pts: [ps[3], ps[0], ps[4], ps[7]], col: baseCol, n: [-1, 0, 0] },
-      { pts: [ps[2], ps[3], ps[7], ps[6]], col: baseCol, n: [0, 0, 1] },
-      { pts: [ps[0], ps[1], ps[5], ps[4]], col: baseCol, n: [0, 0, -1] },
-    ];
-    for (const f of faces) {
-      // A face with a corner behind the camera is skipped on its own;
-      // the rest of the box still draws instead of the whole building
-      // vanishing when one corner falls off the frame.
-      if (f.pts.some((q) => q === null)) continue;
-      // Face normal rotated by the box yaw.
-      const nx = f.n[0] * cos + f.n[2] * sin;
-      const nz = -f.n[0] * sin + f.n[2] * cos;
-      const toEye = { x: cam.eye.x - cx, y: cam.eye.y - h / 2, z: cam.eye.z - cz };
-      const facing = nx * toEye.x + f.n[1] * toEye.y + nz * toEye.z;
-      if (facing <= 0.5) continue;
-      const depth = f.pts.reduce((s, q) => s + q.depth, 0) / 4;
-      items.push({ depth, pts: f.pts, col: f.col });
-    }
   }
-
-  // Buildings, shaded by their stored light and the time of day.
-  for (const b of city.buildings) {
-    const d = Math.hypot(b.x - p.x, b.z - p.z);
-    if (d > 230) continue;
-    const shade = Math.round(118 * b.shade * (0.4 + day * 0.6));
-    const top = Math.min(255, Math.round(148 * b.shade * (0.4 + day * 0.6)));
-    drawBox(b.x, b.z, 0, b.w, b.h, b.d, [shade, Math.round(shade * 0.92), Math.round(shade * 0.85)], [top, top, Math.round(top * 0.95)]);
+  for (const rb of s.roadblocks) {
+    drawables.push({ depth: Math.hypot(rb.x - camera.eye.x, rb.z - camera.eye.z), draw: () => drawBox(canvas, camera, rb.x, rb.z, 8, 1.1, 0.6, rb.angle + Math.PI / 2, '#e8e8e8', '#ff5a3c') });
   }
-
-  // Cars: the player's gold car, traffic, parked cars and cops.
-  function drawCar(car, colorHex, isCop) {
-    const col = hexColor(colorHex);
-    const top = [Math.min(255, col[0] + 40), Math.min(255, col[1] + 40), Math.min(255, col[2] + 40)];
-    drawBox(car.x, car.z, car.angle, 2, 1.1, 4.4, col, top);
-    drawBox(car.x, car.z, car.angle, 1.7, 1.7, 2.2, [28, 39, 51], [40, 55, 70]);
-    if (isCop) {
-      const s = P(car.x, 2.1, car.z);
-      if (s) canvas.fillCircle(s.x, s.y, Math.max(2, screenSize(s.depth, 0.5)), [255, 42, 42]);
-    }
+  if (s.heli.active) {
+    drawables.push({
+      depth: Math.hypot(s.heli.x - camera.eye.x, s.heli.z - camera.eye.z),
+      draw: () => {
+        drawBox(canvas, camera, s.heli.x, s.heli.z, 5.5, 2.2, 2.4, s.heli.angle, PALETTE.heli);
+        const rotorA = point(camera, s.heli.x - Math.cos(s.heli.angle) * 6, 36.6, s.heli.z + Math.sin(s.heli.angle) * 6);
+        const rotorB = point(camera, s.heli.x + Math.cos(s.heli.angle) * 6, 36.6, s.heli.z - Math.sin(s.heli.angle) * 6);
+        if (rotorA && rotorB) canvas.line(rotorA[0], rotorA[1], rotorB[0], rotorB[1], '#c8ccd2');
+        // The spotlight cone down to the player.
+        const heliScreen = point(camera, s.heli.x, 35, s.heli.z);
+        const target = point(camera, s.player.x, 0.1, s.player.z);
+        if (heliScreen && target) {
+          canvas.fillPolygon([[heliScreen[0], heliScreen[1]], [target[0] - 42, target[1]], [target[0] + 42, target[1]]], PALETTE.spotlight, 0.16);
+          canvas.circle(target[0], target[1], 26, PALETTE.spotlight, 0.2);
+        }
+      },
+    });
   }
-  if (state.car) drawCar(state.car, '#e8b13c', false);
-  for (const t of state.traffic) {
-    if (Math.hypot(t.x - p.x, t.z - p.z) > 200) continue;
-    drawCar(t, `#${t.color.toString(16).padStart(6, '0')}`, false);
-  }
-  for (const c of state.parked) {
-    if (Math.hypot(c.x - p.x, c.z - p.z) > 200) continue;
-    drawCar(c, `#${c.color.toString(16).padStart(6, '0')}`, false);
-  }
-  for (const cop of state.police) drawCar(cop, '#2a4fd0', true);
-
-  // Pedestrians as small upright figures.
-  for (const ped of state.peds) {
-    const s = P(ped.x, 0, ped.z);
-    const head = P(ped.x, 1.9, ped.z);
-    if (!s || !head) continue;
-    const h = Math.max(3, screenSize(s.depth, 1.9));
-    const col = hexColor(`#${ped.shirt.toString(16).padStart(6, '0')}`);
-    canvas.drawLine(s.x, s.y, head.x, head.y, col, Math.max(2, Math.round(h / 6)));
-    canvas.fillCircle(head.x, head.y, Math.max(1.5, h / 12), [216, 168, 120]);
-  }
-
-  // Roadblocks: orange cones and a white bar.
-  for (const rb of state.roadblocks) {
-    for (let k = -1; k <= 1; k += 1) {
-      const cx = rb.x + Math.cos(rb.angle) * k * 2.2;
-      const cz = rb.z - Math.sin(rb.angle) * k * 2.2;
-      const base = P(cx, 0, cz);
-      const tip = P(cx, 1.6, cz);
-      if (!base || !tip) continue;
-      const w = Math.max(2, screenSize(base.depth, 0.6));
-      canvas.fillPolygon(
-        [{ x: base.x - w, y: base.y }, { x: base.x + w, y: base.y }, { x: tip.x, y: tip.y }],
-        [232, 90, 46],
-      );
-    }
-  }
-
-  // The mission beam.
-  if (state.marker) {
-    const base = P(state.marker.x, 0, state.marker.z);
-    const top = P(state.marker.x, 60, state.marker.z);
-    if (base && top) {
-      const w = Math.max(3, screenSize(base.depth, 1.2));
-      canvas.fillPolygon(
-        [{ x: base.x - w, y: base.y }, { x: base.x + w, y: base.y }, { x: top.x + w / 3, y: top.y }, { x: top.x - w / 3, y: top.y }],
-        [255, 207, 61, 90],
-      );
-    }
-  }
-
-  // Helicopter: body, rotor and the spotlight cone on the player.
-  if (state.heli.active) {
-    const h = state.heli;
-    const body = P(h.x, h.alt, h.z);
-    const tail = P(h.x - Math.sin(h.angle) * 3, h.alt, h.z - Math.cos(h.angle) * 3);
-    if (body) {
-      const s = Math.max(4, screenSize(body.depth, 2.4));
-      canvas.fillCircle(body.x, body.y, s, [28, 39, 51]);
-      if (tail) canvas.drawLine(body.x, body.y, tail.x, tail.y, [28, 39, 51], Math.max(2, Math.round(s / 3)));
-      canvas.drawLine(body.x - s * 2, body.y - s * 0.5, body.x + s * 2, body.y - s * 0.5, [200, 210, 220], 2);
-      const pp = P(p.x, 0, p.z);
-      if (pp) {
-        canvas.fillPolygon(
-          [{ x: body.x - s * 0.7, y: body.y }, { x: body.x + s * 0.7, y: body.y }, { x: pp.x + s, y: pp.y }, { x: pp.x - s, y: pp.y }],
-          [255, 242, 200, 60],
-        );
-        canvas.fillCircle(pp.x, pp.y, s, [255, 242, 200, 90]);
+  drawables.push({
+    depth: 0,
+    draw: () => {
+      if (s.player.onFoot) {
+        drawBox(canvas, camera, s.player.x, s.player.z, 0.5, 1.8, 0.5, s.player.angle, PALETTE.player);
+      } else {
+        const carColor = s.player.car >= 0 ? s.parkedCars[s.player.car].color : PALETTE.playerCar;
+        drawBox(canvas, camera, s.player.x, s.player.z, 4.4, 1.5, 2.0, s.player.angle, carColor);
       }
+    },
+  });
+  drawables.sort((a, b) => b.depth - a.depth);
+  for (const item of drawables) item.draw();
+
+  // The mission marker, a bobbing green diamond over the waypoint.
+  const wp = missions.waypoint();
+  if (wp) {
+    const m = point(camera, wp.x, 3.2, wp.z);
+    if (m) {
+      canvas.fillPolygon([[m[0], m[1] - 16], [m[0] + 11, m[1]], [m[0], m[1] + 16], [m[0] - 11, m[1]]], PALETTE.marker);
+      canvas.strokePolygon([[m[0], m[1] - 16], [m[0] + 11, m[1]], [m[0], m[1] + 16], [m[0] - 11, m[1]]], '#0d1526');
     }
   }
 
-  // Paint far to near.
-  items.sort((a, b) => b.depth - a.depth);
-  for (const item of items) {
-    canvas.fillPolygon(item.pts.map((q) => ({ x: q.x, y: q.y })), item.col);
+  // HUD, as the game draws it: cash and wanted stars top left, clock and
+  // district top right, objective bottom left, speed bottom right.
+  const cash = `$${Math.floor(s.cash)}`;
+  drawText(canvas, cash, 18, 16, 3, '#f2c94c');
+  let starX = 18 + textWidth(cash, 3) + 24;
+  for (let i = 0; i < 5; i += 1) {
+    drawStar(canvas, starX + 13, 30, 11, i < s.wanted, '#ffd76a');
+    starX += 28;
   }
+  const clock = `${clockText(s.clockMinutes)} ${sim.district()}`;
+  drawText(canvas, clock, WIDTH - 18 - textWidth(clock, 2), 18, 2, '#cfd6e2');
+  const objective = missions.objective();
+  if (objective) drawText(canvas, objective, 18, HEIGHT - 44, 2, '#eef1f5');
+  const speedText = s.player.onFoot ? 'ON FOOT' : `${Math.round(Math.abs(s.player.speed) * 3.6)} KM/H`;
+  drawText(canvas, speedText, WIDTH - 18 - textWidth(speedText, 2), HEIGHT - 44, 2, '#eef1f5');
+  // Station and weapon names come from the config, as the game reads them;
+  // the painter's text is upper-cased by the font, so no case is kept here.
+  const radio = RADIO[s.radio].name;
+  const weapon = WEAPONS[s.player.weapon].name;
+  drawText(canvas, `${weapon}  ${radio}`, WIDTH - 18 - textWidth(`${weapon}  ${radio}`, 2), HEIGHT - 72, 2, '#9aa3b2');
 
-  // HUD: title, wanted stars, cash, objective, speed.
-  const white = [242, 244, 247];
-  const gold = [255, 207, 61];
-  drawText(canvas, 'SOLANO HEAT', 24, 20, gold, 3);
-  const stars = sim.wantedStars();
-  drawText(canvas, `WANTED ${'*'.repeat(stars)}${'-'.repeat(5 - stars)}`, 24, 60, stars >= 4 ? [255, 90, 61] : white, 2);
-  drawText(canvas, `$${state.cash}`, 24, 88, white, 2);
-  const obj = missions.statusText();
-  if (obj) drawText(canvas, obj.slice(0, 60), 24, H - 52, gold, 2);
-  const kmh = Math.round(Math.abs(state.player.speed || 0) * 3.6);
-  drawText(canvas, state.car ? `${kmh} KM/H` : 'ON FOOT', W - 264, H - 52, white, 2);
-  drawText(canvas, state.district.toUpperCase(), W - 264, 20, white, 2);
+  // The minimap, bottom right: roads, the player, the waypoint, the cops.
+  const mapX = WIDTH - 208;
+  const mapY = HEIGHT - 168;
+  const scaleX = 190 / WORLD.width;
+  const scaleZ = 150 / WORLD.height;
+  canvas.fillRect(mapX, mapY, 190, 150, '#10141c', 0.85);
+  canvas.strokePolygon([[mapX, mapY], [mapX + 190, mapY], [mapX + 190, mapY + 150], [mapX, mapY + 150]], '#ffffff33');
+  for (const x of sim.city.avenues) canvas.line(mapX + x * scaleX, mapY, mapX + x * scaleX, mapY + 150, '#ffffff22');
+  for (const z of sim.city.streets) canvas.line(mapX, mapY + z * scaleZ, mapX + 190, mapY + z * scaleZ, '#ffffff22');
+  if (wp) canvas.circle(mapX + wp.x * scaleX, mapY + wp.z * scaleZ, 4, PALETTE.marker);
+  for (const cop of s.police) canvas.circle(mapX + cop.x * scaleX, mapY + cop.z * scaleZ, 3, '#2f7bff');
+  canvas.circle(mapX + s.player.x * scaleX, mapY + s.player.z * scaleZ, 4, '#f2c94c');
 
-  return { name, png: encodePng(canvas), state };
+  return encodePng(WIDTH, HEIGHT, canvas.pixels);
 }
 
-const outDir = process.argv[2] ?? 'screenshots';
-mkdirSync(outDir, { recursive: true });
-for (const name of SHOTS) {
-  const { png, state } = paintShot(name);
-  const file = join(outDir, `${OUT_NAMES[name]}.png`);
-  writeFileSync(file, png);
-  console.log(`${file}: ${png.length} bytes, wanted ${state.wanted}, clock ${state.clockMinutes}, police ${state.police.length}, heli ${state.heli.active}`);
+for (const scene of scenes) {
+  const query = new URLSearchParams(scene.query.replace(/^\?/, ''));
+  const seed = Number.parseInt(query.get('seed') ?? '7', 10);
+  const name = query.get('shot') ?? scene.name.replace(/\.png$/, '');
+  const png = renderScene(name, seed);
+  writeFileSync(join(root, 'screenshots', scene.name), png);
+  console.log(`${scene.name}: ${png.length} bytes — ${scene.label ?? name}`);
 }

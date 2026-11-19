@@ -1,24 +1,19 @@
-// Solano Heat — a tiny static server for game/ (Node 22, standard library
-// only). A development convenience, not a web server for the internet: run
-// `node serve.ts` and open http://localhost:8080 to play. It serves only
-// files under game/, sends the MIME types a browser game needs, and refuses
-// any path that climbs out of game/. `--port <n>` picks another port.
+// A tiny static server for game/ (Node 22, standard library only), so an entry can be played
+// locally without a build step: `node serve.ts` serves game/ on http://localhost:8080.
+// It sends the MIME types a browser game needs, refuses any path outside game/, and otherwise
+// does nothing clever: this is a development convenience, not a web server for the internet.
 import { createReadStream, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const rootDir = resolve(fileURLToPath(new URL('./game', import.meta.url)));
+const root = resolve(fileURLToPath(new URL('./game', import.meta.url)));
+const args = process.argv.slice(2);
+const portIndex = args.indexOf('--port');
+const requested = portIndex === -1 ? 8080 : Number(args[portIndex + 1]);
+const port = Number.isInteger(requested) && requested > 0 && requested < 65536 ? requested : 8080;
 
-function choosePort(argv) {
-  const at = argv.indexOf('--port');
-  const wanted = at === -1 ? 8080 : Number(argv[at + 1]);
-  return Number.isInteger(wanted) && wanted > 0 && wanted < 65536 ? wanted : 8080;
-}
-
-const port = choosePort(process.argv.slice(2));
-
-const MIME = {
+const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8',
@@ -32,44 +27,46 @@ const MIME = {
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.woff2': 'font/woff2',
+  '.glb': 'model/gltf-binary',
+  '.gltf': 'model/gltf+json',
+  '.bin': 'application/octet-stream',
+  '.wasm': 'application/wasm',
+  '.wav': 'audio/wav',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
   '.txt': 'text/plain; charset=utf-8',
 };
 
-function sendFile(file, response) {
-  let bytes;
+createServer((request, response) => {
+  const url = new URL(request.url ?? '/', 'http://localhost');
+  let pathname: string;
   try {
-    const info = statSync(file);
-    if (!info.isFile()) throw new Error('not a file');
-    bytes = info.size;
+    pathname = decodeURIComponent(url.pathname);
+  } catch {
+    response.writeHead(400).end('bad request');
+    return;
+  }
+  if (pathname.endsWith('/')) pathname += 'index.html';
+  const file = resolve(join(root, normalize(pathname)));
+  if (file !== root && !file.startsWith(root + sep)) {
+    response.writeHead(403).end('forbidden');
+    return;
+  }
+  let size: number;
+  try {
+    const stats = statSync(file);
+    if (!stats.isFile()) throw new Error('not a file');
+    size = stats.size;
   } catch {
     response.writeHead(404).end('not found');
     return;
   }
   response.writeHead(200, {
     'content-type': MIME[extname(file).toLowerCase()] ?? 'application/octet-stream',
-    'content-length': bytes,
+    'content-length': size,
     'cache-control': 'no-store',
   });
   createReadStream(file).pipe(response);
-}
-
-const server = createServer((request, response) => {
-  let pathname;
-  try {
-    pathname = decodeURIComponent(new URL(request.url ?? '/', 'http://localhost').pathname);
-  } catch {
-    response.writeHead(400).end('bad request');
-    return;
-  }
-  if (pathname.endsWith('/')) pathname += 'index.html';
-  const file = resolve(join(rootDir, normalize(pathname)));
-  if (file !== rootDir && !file.startsWith(rootDir + sep)) {
-    response.writeHead(403).end('forbidden');
-    return;
-  }
-  sendFile(file, response);
-});
-
-server.listen(port, '127.0.0.1', () => {
-  console.log(`Solano Heat: game/ is on http://localhost:${port}`);
+}).listen(port, '127.0.0.1', () => {
+  console.log(`game/ is on http://localhost:${port}`);
 });

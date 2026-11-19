@@ -1,61 +1,126 @@
-// Solano Heat — the chase camera, as pure math. The browser renderer and
-// the Node screenshot painter both use this, so a screenshot frames exactly
-// what the player sees. No DOM, no Three.js in here.
-export const VIEW = { distance: 13, height: 5.2, lookAhead: 7, fov: 62 };
+// Solano Heat — the chase camera. One piece of math serves both renders:
+// the browser's Three.js camera and the Node screenshot painter take the
+// same eye and target, so a screenshot frames exactly what the player sees.
 
-/** Camera eye + target for a car (or on-foot player) at (x, z, angle). */
-export function chaseCamera(x, z, angle, speed = 0) {
-  const back = VIEW.distance + Math.min(4, Math.abs(speed) * 0.08);
-  const eye = {
-    x: x - Math.sin(angle) * back,
-    y: VIEW.height + Math.min(1.5, Math.abs(speed) * 0.02),
-    z: z - Math.cos(angle) * back,
-  };
-  const target = {
-    x: x + Math.sin(angle) * VIEW.lookAhead,
-    y: 1.4,
-    z: z + Math.cos(angle) * VIEW.lookAhead,
-  };
-  return { eye, target };
+/** Vertical field of view, in radians. */
+export const CAMERA_FOV = (62 * Math.PI) / 180;
+
+/** How fast the camera settles behind the player (per second). */
+const SMOOTH = 5;
+
+/** A 3D point. */
+function point(x, y, z) {
+  return { x, y, z };
 }
 
-function unit(v) {
-  const len = Math.hypot(v.x, v.y, v.z) || 1;
-  return { x: v.x / len, y: v.y / len, z: v.z / len };
+function sub(a, b) {
+  return point(a.x - b.x, a.y - b.y, a.z - b.z);
 }
-function crossProduct(a, b) {
-  return {
-    x: a.y * b.z - a.z * b.y,
-    y: a.z * b.x - a.x * b.z,
-    z: a.x * b.y - a.y * b.x,
-  };
+
+function cross(a, b) {
+  return point(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+}
+
+function dot(a, b) {
+  return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+function length(a) {
+  return Math.hypot(a.x, a.y, a.z);
+}
+
+function normalize(a) {
+  const l = length(a) || 1;
+  return point(a.x / l, a.y / l, a.z / l);
 }
 
 /**
- * Project a world point to screen pixels (1280x720). Returns null when the
- * point is behind the camera. The same math the Three.js camera uses:
- * forward from eye to target, right = forward x up, up = right x forward.
+ * The chase camera: it trails the player, smoothed, and looks a little
+ * ahead of where they are going. `update` moves it; `eye` and `target`
+ * are what both renderers point at.
  */
-export function project(eye, target, point, width = 1280, height = 720) {
-  const fwd = unit({ x: target.x - eye.x, y: target.y - eye.y, z: target.z - eye.z });
-  const right = unit(crossProduct(fwd, { x: 0, y: 1, z: 0 }));
-  const up = crossProduct(right, fwd);
-  const rel = { x: point.x - eye.x, y: point.y - eye.y, z: point.z - eye.z };
-  const depth = rel.x * fwd.x + rel.y * fwd.y + rel.z * fwd.z;
-  if (depth < 0.5) return null;
-  const focal = (height / 2) / Math.tan((VIEW.fov * Math.PI) / 360);
-  const sx = (rel.x * right.x + rel.y * right.y + rel.z * right.z) / depth;
-  const sy = (rel.x * up.x + rel.y * up.y + rel.z * up.z) / depth;
+export function createCamera() {
+  const eye = point(480, 6, 340);
+  const target = point(480, 1, 360);
+
   return {
-    x: width / 2 + sx * focal,
-    y: height / 2 - sy * focal,
-    depth,
-    scale: focal / depth,
+    eye,
+    target,
+    update(sim, dt) {
+      const p = sim.state.player;
+      const driving = !p.onFoot;
+      const back = driving ? 9.5 : 6.5;
+      const height = driving ? 4.6 : 3.1;
+      const ahead = driving ? 13 : 9;
+      const fx = Math.sin(p.angle);
+      const fz = Math.cos(p.angle);
+      const wantEye = point(p.x - fx * back, height, p.z - fz * back);
+      const wantTarget = point(p.x + fx * ahead, 1.2, p.z + fz * ahead);
+      const k = 1 - Math.exp(-SMOOTH * dt);
+      eye.x += (wantEye.x - eye.x) * k;
+      eye.y += (wantEye.y - eye.y) * k;
+      eye.z += (wantEye.z - eye.z) * k;
+      target.x += (wantTarget.x - target.x) * k;
+      target.y += (wantTarget.y - target.y) * k;
+      target.z += (wantTarget.z - target.z) * k;
+    },
+    /** Snap the camera to the player at once (scene starts). */
+    snap(sim) {
+      const p = sim.state.player;
+      const driving = !p.onFoot;
+      const back = driving ? 9.5 : 6.5;
+      const height = driving ? 4.6 : 3.1;
+      const ahead = driving ? 13 : 9;
+      const fx = Math.sin(p.angle);
+      const fz = Math.cos(p.angle);
+      eye.x = p.x - fx * back;
+      eye.y = height;
+      eye.z = p.z - fz * back;
+      target.x = p.x + fx * ahead;
+      target.y = 1.2;
+      target.z = p.z + fz * ahead;
+    },
   };
 }
 
-/** Screen-space size of a world length at a given depth. */
-export function screenSize(depth, worldLength, height = 720) {
-  const focal = (height / 2) / Math.tan((VIEW.fov * Math.PI) / 360);
-  return (worldLength * focal) / Math.max(0.5, depth);
+/** The camera's forward direction, from its eye to its target. */
+export function cameraForward(camera) {
+  const dx = camera.target.x - camera.eye.x;
+  const dy = camera.target.y - camera.eye.y;
+  const dz = camera.target.z - camera.eye.z;
+  const len = Math.hypot(dx, dy, dz) || 1;
+  return { x: dx / len, y: dy / len, z: dz / len };
+}
+
+/**
+ * Project a world point to screen pixels. Returns null when the point is
+ * behind the camera. `width`/`height` are the frame's pixels.
+ */
+export function projectPoint(p, eye, target, width, height) {
+  const forward = normalize(sub(target, eye));
+  const right = normalize(cross(forward, point(0, 1, 0)));
+  const up = cross(right, forward);
+  const rel = sub(p, eye);
+  const z = dot(rel, forward);
+  if (z < 0.5) return null;
+  const f = height / 2 / Math.tan(CAMERA_FOV / 2);
+  const x = dot(rel, right);
+  const y = dot(rel, up);
+  return {
+    x: width / 2 + (x / z) * f,
+    y: height / 2 - (y / z) * f,
+    depth: z,
+    scale: f / z,
+  };
+}
+
+/** Project a flat ground quad's corners; null when any corner is behind. */
+export function projectQuad(corners, eye, target, width, height) {
+  const out = [];
+  for (const c of corners) {
+    const s = projectPoint(c, eye, target, width, height);
+    if (!s) return null;
+    out.push(s);
+  }
+  return out;
 }

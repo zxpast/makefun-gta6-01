@@ -1,139 +1,188 @@
-// Solano Heat — the DOM HUD and the live minimap. The 3D canvas shows the
-// world; this shows cash, wanted stars, the clock, the district, the current
-// objective, speed, NOS, weapon, radio and the garage / mission menus.
-import { WEAPONS } from './config.js';
+// Solano Heat — the HUD: cash, health, wanted stars, clock and district,
+// weapon and radio, the objective line, and a live minimap. All DOM, all
+// plain: the sim never sees this file, and this file never rules the game.
 
-function stars(n) { return '★'.repeat(n) + '☆'.repeat(5 - n); }
+import { PALETTE, RADIO, WEAPONS, WORLD } from './config.js';
 
-export function createHud(doc, city) {
-  const el = (id) => doc.getElementById(id);
-  const cashEl = el('hud-cash');
-  const wantedEl = el('hud-wanted');
-  const clockEl = el('hud-clock');
-  const districtEl = el('hud-district');
-  const objectiveEl = el('hud-objective');
-  const speedEl = el('hud-speed');
-  const nosEl = el('hud-nos');
-  const weaponEl = el('hud-weapon');
-  const radioEl = el('hud-radio');
-  const feedEl = el('hud-feed');
-  const bannerEl = el('hud-banner');
-  const mapCanvas = el('hud-map');
-  const mapCtx = mapCanvas.getContext('2d');
-  const garageEl = el('menu-garage');
-  const missionsEl = el('menu-missions');
-  const titleEl = el('screen-title');
-  const pauseEl = el('screen-pause');
-  const overEl = el('screen-over');
-  const statusEl = el('status');
+const MAP_W = 190;
+const MAP_H = 150;
+
+function el(tag, parent, text) {
+  const node = document.createElement(tag);
+  if (text !== undefined) node.textContent = text;
+  if (parent) parent.appendChild(node);
+  return node;
+}
+
+function stars(n) {
+  let out = '';
+  for (let i = 0; i < 5; i += 1) out += i < n ? '★' : '☆';
+  return out;
+}
+
+function clockText(minutes) {
+  const h = Math.floor(minutes / 60) % 24;
+  const m = Math.floor(minutes % 60);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+export function createHud(sim, missions) {
+  const root = document.getElementById('hud');
+  const top = el('div', root);
+  top.id = 'hud-top';
+  const cash = el('div', top, '$0');
+  cash.id = 'hud-cash';
+  const health = el('div', top);
+  health.id = 'hud-health';
+  const healthBar = el('div', health);
+  healthBar.id = 'hud-health-bar';
+  const wanted = el('div', top, '☆☆☆☆☆');
+  wanted.id = 'hud-wanted';
+  const clock = el('div', top, '');
+  clock.id = 'hud-clock';
+
+  const right = el('div', root);
+  right.id = 'hud-right';
+  const weapon = el('div', right, 'Fists');
+  weapon.id = 'hud-weapon';
+  const radio = el('div', right, 'SOL FM');
+  radio.id = 'hud-radio';
+
+  const objective = el('div', root, '');
+  objective.id = 'hud-objective';
+  const timer = el('div', root, '');
+  timer.id = 'hud-timer';
+  const speed = el('div', root, '');
+  speed.id = 'hud-speed';
+  const banner = el('div', root, '');
+  banner.id = 'hud-banner';
+  const minimap = document.createElement('canvas');
+  minimap.id = 'hud-map';
+  minimap.width = MAP_W;
+  minimap.height = MAP_H;
+  root.appendChild(minimap);
+  const mapCtx = minimap.getContext('2d');
+
+  const panel = el('div', root, '');
+  panel.id = 'hud-panel';
+  panel.style.display = 'none';
+
   let bannerTimer = 0;
+  let lastMessage = '';
 
-  function clockText(minutes) {
-    const h = Math.floor(minutes / 60) % 24;
-    const m = Math.floor(minutes % 60);
-    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-  }
-
-  function drawMap(state) {
-    const W = mapCanvas.width;
-    const H = mapCanvas.height;
-    const sx = W / 960;
-    const sy = H / 640;
+  function drawMap(waypoint) {
+    const s = sim.state;
+    const sx = MAP_W / WORLD.width;
+    const sz = MAP_H / WORLD.height;
     mapCtx.fillStyle = '#10141c';
-    mapCtx.fillRect(0, 0, W, H);
-    mapCtx.strokeStyle = '#3a4150';
+    mapCtx.fillRect(0, 0, MAP_W, MAP_H);
+    mapCtx.strokeStyle = '#3a3f4a';
     mapCtx.lineWidth = 2;
-    for (const x of city.verticals) {
+    for (const ax of s.city.avenues) {
       mapCtx.beginPath();
-      mapCtx.moveTo(x * sx, 0);
-      mapCtx.lineTo(x * sx, H);
+      mapCtx.moveTo(ax * sx, 0);
+      mapCtx.lineTo(ax * sx, MAP_H);
       mapCtx.stroke();
     }
-    for (const z of city.horizontals) {
+    for (const sz2 of s.city.streets) {
       mapCtx.beginPath();
-      mapCtx.moveTo(0, z * sy);
-      mapCtx.lineTo(W, z * sy);
+      mapCtx.moveTo(0, sz2 * sz);
+      mapCtx.lineTo(MAP_W, sz2 * sz);
       mapCtx.stroke();
     }
-    const dot = (x, z, color, r) => {
-      mapCtx.fillStyle = color;
+    mapCtx.fillStyle = '#2a2f3a';
+    for (const b of s.city.buildings) {
+      mapCtx.fillRect(b.x0 * sx, b.z0 * sz, (b.x1 - b.x0) * sx, (b.z1 - b.z0) * sz);
+    }
+    if (waypoint) {
+      mapCtx.fillStyle = PALETTE.marker;
       mapCtx.beginPath();
-      mapCtx.arc(x * sx, z * sy, r, 0, Math.PI * 2);
+      mapCtx.arc(waypoint.x * sx, waypoint.z * sz, 5, 0, Math.PI * 2);
       mapCtx.fill();
-    };
-    if (state.marker) dot(state.marker.x, state.marker.z, '#ffcf3d', 5);
-    for (const c of state.police) dot(c.x, c.z, '#3d6bff', 3);
-    if (state.heli.active) dot(state.heli.x, state.heli.z, '#ff5a3d', 4);
-    dot(state.player.x, state.player.z, '#e8b13c', 4);
-  }
-
-  function update(state, wanted, objectiveText, extra = {}) {
-    cashEl.textContent = `$${state.cash}`;
-    wantedEl.textContent = stars(wanted);
-    wantedEl.style.color = wanted >= 4 ? '#ff5a3d' : wanted > 0 ? '#ffb13d' : '#f2f4f7';
-    clockEl.textContent = clockText(state.clockMinutes);
-    districtEl.textContent = state.district;
-    objectiveEl.textContent = objectiveText;
-    const kmh = Math.round(Math.abs(state.player.speed || 0) * 3.6);
-    speedEl.textContent = state.car ? `${kmh} km/h` : 'On foot';
-    const nos = state.upgrades.nos ? Math.round(state.upgrades.nosAmount) : 0;
-    nosEl.textContent = state.upgrades.nos ? `NOS ${nos}%` : 'NOS —';
-    const w = state.weapons.current;
-    const ammo = w === 'fists' ? '∞' : `${state.weapons.ammo[w] ?? 0}`;
-    weaponEl.textContent = `${WEAPONS[w].name} · ${ammo}`;
-    radioEl.textContent = extra.radio || '';
-    feedEl.innerHTML = state.feed.map((f) => `<div>${f}</div>`).join('');
-    drawMap(state);
-    if (bannerTimer > 0) {
-      bannerTimer -= 1 / 60;
-      if (bannerTimer <= 0) bannerEl.textContent = '';
     }
+    for (const cop of s.police) {
+      mapCtx.fillStyle = '#2f6fd0';
+      mapCtx.beginPath();
+      mapCtx.arc(cop.x * sx, cop.z * sz, 3, 0, Math.PI * 2);
+      mapCtx.fill();
+    }
+    if (s.heli.active) {
+      mapCtx.fillStyle = '#e8e8e8';
+      mapCtx.beginPath();
+      mapCtx.arc(s.heli.x * sx, s.heli.z * sz, 3, 0, Math.PI * 2);
+      mapCtx.fill();
+    }
+    const p = s.player;
+    mapCtx.save();
+    mapCtx.translate(p.x * sx, p.z * sz);
+    mapCtx.rotate(Math.atan2(Math.sin(p.angle), Math.cos(p.angle)) + Math.PI / 2);
+    mapCtx.fillStyle = PALETTE.player;
+    mapCtx.beginPath();
+    mapCtx.moveTo(0, -6);
+    mapCtx.lineTo(4, 5);
+    mapCtx.lineTo(-4, 5);
+    mapCtx.closePath();
+    mapCtx.fill();
+    mapCtx.restore();
   }
 
-  function banner(text, seconds = 3) {
-    bannerEl.textContent = text;
-    bannerTimer = seconds;
-    statusEl.textContent = text;
-  }
-
-  function showGarage(state) {
-    const g = state.upgrades;
-    garageEl.innerHTML = `
-      <h2>Eastside Garage</h2>
-      <p>Cash $${state.cash} — press G to leave</p>
-      <p>[1] Body Armor $800 ${g.armor ? '— fitted' : ''}</p>
-      <p>[2] Engine Tune $1200 ${g.engine ? '— fitted' : ''}</p>
-      <p>[3] NOS Kit $600 ${g.nos ? `— ${Math.round(g.nosAmount)}%` : ''} · [4] NOS refill $100</p>
-      <p>[5] Pistol $300 · [6] SMG $900 · [7] Shotgun $1200</p>
-      <p>Ammo: pistol $60 · SMG $120 · shotgun $180 (buy with 5/6/7 when owned)</p>`;
-    garageEl.style.display = 'block';
-  }
-
-  function showMissions(missions) {
-    const list = missions.chapters.map((c, i) => {
-      const done = missions.state.completed.includes(c.id);
-      const next = i === missions.state.chapterIndex && !missions.state.active;
-      return `<p>${done ? '✓' : next ? '▶' : '·'} ${c.title} — $${c.pay}</p>`;
-    }).join('');
-    const jobs = missions.sideJobs.map((j) => `<p>[${j.id === 'taxi' ? 1 : j.id === 'courier-job' ? 2 : j.id === 'vigilante' ? 3 : 4}] ${j.title} — $${j.pay}</p>`).join('');
-    missionsEl.innerHTML = `<h2>Jobs</h2>${list}<h3>Side jobs</h3>${jobs}<p>Press M to close · 1–4 take a side job</p>`;
-    missionsEl.style.display = 'block';
-  }
-
-  function hideMenus() {
-    garageEl.style.display = 'none';
-    missionsEl.style.display = 'none';
-  }
-
-  function showScreen(name) {
-    titleEl.style.display = name === 'title' ? 'block' : 'none';
-    pauseEl.style.display = name === 'pause' ? 'block' : 'none';
-    overEl.style.display = name === 'over' ? 'block' : 'none';
-  }
-
-  function setOverText(text) {
-    overEl.querySelector('p').textContent = text;
-  }
-
-  return { update, banner, showGarage, showMissions, hideMenus, showScreen, setOverText };
+  return {
+    update(dt) {
+      const s = sim.state;
+      const p = s.player;
+      cash.textContent = `$${Math.floor(s.cash)}`;
+      const healthPct = Math.max(0, Math.round((p.health / p.maxHealth) * 100));
+      healthBar.style.width = `${healthPct}%`;
+      healthBar.textContent = `${healthPct}`;
+      wanted.textContent = stars(s.wanted);
+      wanted.style.color = s.wanted > 0 ? PALETTE.wanted : PALETTE.muted;
+      clock.textContent = `${clockText(s.clockMinutes)} · ${sim.district()}`;
+      const w = WEAPONS[p.weapon];
+      const ammo = p.ammo[p.weapon] === Infinity ? '∞' : String(p.ammo[p.weapon]);
+      weapon.textContent = `${w.name} · ${ammo}`;
+      radio.textContent = `♪ ${RADIO[s.radio].name}`;
+      objective.textContent = missions.objective();
+      const left = missions.timeLeft();
+      timer.textContent = left === null ? '' : `${Math.ceil(left)}s`;
+      timer.style.color = left !== null && left < 20 ? PALETTE.wanted : PALETTE.text;
+      if (p.onFoot) {
+        speed.textContent = p.speed > 0.5 ? 'On foot' : '';
+      } else {
+        const nos = s.garage.nos ? ` · NOS ${s.garage.nosLeft}` : '';
+        speed.textContent = `${Math.round(p.speed * 3.6)} km/h${nos}`;
+      }
+      const msg = missions.message;
+      if (msg !== lastMessage) {
+        lastMessage = msg;
+        if (msg) {
+          banner.textContent = msg;
+          banner.style.display = 'block';
+          bannerTimer = 4;
+        }
+      }
+      if (bannerTimer > 0) {
+        bannerTimer -= dt;
+        if (bannerTimer <= 0) banner.style.display = 'none';
+      }
+      drawMap(missions.waypoint());
+    },
+    /** Show a full-screen panel (title, paused, over, missions, garage). */
+    showPanel(html) {
+      if (!html) {
+        panel.style.display = 'none';
+        panel.innerHTML = '';
+        return;
+      }
+      panel.innerHTML = html;
+      // flex, not block: the panel's CSS centres its content with
+      // flex-direction column, and display:block would switch that off.
+      panel.style.display = 'flex';
+    },
+    announce(text) {
+      banner.textContent = text;
+      banner.style.display = 'block';
+      bannerTimer = 4;
+      lastMessage = text;
+    },
+  };
 }

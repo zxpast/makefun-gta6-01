@@ -1,18 +1,1 @@
-[
-  {
-    "name": "1-chase.png",
-    "query": "?shot=chase&seed=7"
-  },
-  {
-    "name": "2-heli.png",
-    "query": "?shot=heli&seed=7"
-  },
-  {
-    "name": "3-roadblock.png",
-    "query": "?shot=roadblock&seed=7"
-  },
-  {
-    "name": "4-finale.png",
-    "query": "?shot=finale&seed=7"
-  }
-]
+[{"label":"Daytime chase, three stars","name":"1-chase.png","query":"?shot=chase&seed=7"},{"label":"Night helicopter pursuit, four stars","name":"2-heli.png","query":"?shot=heli&seed=7"},{"label":"Roadblock at dusk, four stars","name":"3-roadblock.png","query":"?shot=roadblock&seed=7"},{"label":"The Night Job finale, five stars","name":"4-finale.png","query":"?shot=finale&seed=7"}]

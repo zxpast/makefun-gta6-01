@@ -1,57 +1,56 @@
-// Solano Heat — boot and the one loop. Input is read every frame, the sim
-// advances in fixed 1/60 s steps, missions update, and the 3D renderer
-// paints what is there. Screens: title, play, paused, busted, game over.
-// ?seed=N fixes the city. ?shot=chase|heli|roadblock|finale stages that
-// scene instead of running the loop, paints it twice and sets
-// window.__shotReady. ?auto=1 hands the wheel to the autopilot demo.
-import { STEP } from './config.js';
-import { createRandom } from './random.js';
-import { buildCity } from './city.js';
-import { createSim, EVENT_BOOM, EVENT_BUSTED, EVENT_DEAD, EVENT_SHOT } from './sim.js';
+// Solano Heat — boot and the one loop. The sim advances in fixed 1/60 s
+// steps (several in a slow frame, none in a fast one) and the Three.js
+// renderer paints what is there. Screens: title, play, paused, busted,
+// wasted, missions, garage. ?seed=N fixes the city. ?shot=chase|heli|
+// roadblock|finale stages that scene instead of running the loop, paints it
+// twice and sets window.__shotReady. ?auto=1 lets the autopilot play.
+
+import { CAR, GARAGE, RADIO, SPAWN, STEP, WEAPONS } from './config.js';
+import { createSim, EVENT_BUSTED, EVENT_SHOT, EVENT_WASTED } from './sim.js';
 import { createMissions } from './missions.js';
-import { createWorld3d } from './world3d.js';
+import { createAutopilot } from './autopilot.js';
+import { createWorldRenderer } from './world3d.js';
 import { createHud } from './hud.js';
 import {
-  ACTION_CONFIRM, ACTION_ENTER, ACTION_EXIT, ACTION_GARAGE, ACTION_MISSIONS,
-  ACTION_MUTE, ACTION_NUMBER, ACTION_PAUSE, ACTION_RADIO, ACTION_SHOOT,
-  ACTION_WEAPON, createInput, setInCar,
+  ACTION_CONFIRM,
+  ACTION_GARAGE,
+  ACTION_MISSIONS,
+  ACTION_PAUSE,
+  ACTION_RADIO,
+  ACTION_SOUND,
+  createInput,
 } from './input.js';
 import { createAudio } from './audio.js';
-import { createAutopilot } from './autopilot.js';
-import { applySave, loadGame, saveGame } from './save.js';
+import { createSave } from './save.js';
 import { stageShot } from './shots.js';
 
+/** The longest frame the loop catches up on; a longer stall is dropped. */
 const MAX_FRAME = 0.25;
-const GARAGE_SPOT = { x: 700, z: 300 };
 
 const params = new URLSearchParams(window.location.search);
 const shot = params.get('shot');
-const autoDemo = params.get('auto') === '1';
+const auto = params.get('auto') === '1';
 const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
 const seed = Number.isInteger(seedParam) ? seedParam : 7;
 
 const canvas = document.getElementById('game');
-const random = createRandom(seed);
-const city = buildCity(random);
-const sim = createSim(random, city);
+const status = document.getElementById('status');
+const sim = createSim(seed);
 const missions = createMissions(sim);
-const world3d = createWorld3d(canvas, city);
-const hud = createHud(document, city);
+const renderer = createWorldRenderer(canvas, sim);
+const hud = createHud(sim, missions);
 const audio = createAudio();
-applySave(sim, missions, loadGame());
+const save = createSave(sim, missions);
 
-const idleInput = {
-  steer: 0, throttle: 0, run: false, nos: false,
-  enter: false, exit: false, shoot: false, weaponSwitch: false,
-  radio: false, garage: false, garageBuy: null, ammoBuy: null,
-};
+function announce(message) {
+  status.textContent = message;
+}
 
 function runShot(name) {
-  stageShot(name, sim, missions);
+  const scene = stageShot(name, sim, missions);
   let painted = 0;
   function paint() {
-    world3d.draw(sim.state, sim.state.time);
-    hud.update(sim.state, sim.wantedStars(), missions.statusText(), { radio: audio.stationName() });
+    renderer.draw(0, missions.waypoint());
     painted += 1;
     if (painted < 2) requestAnimationFrame(paint);
     else window.__shotReady = true;
@@ -62,155 +61,251 @@ function runShot(name) {
 function runGame() {
   const input = createInput(canvas);
   const pilot = createAutopilot(sim, missions);
-  const queued = { enter: false, shoot: false, weaponSwitch: false };
   let screen = 'title';
+  let accumulator = 0;
+  let last = performance.now();
   let garageOpen = false;
   let missionsOpen = false;
-  let acc = 0;
-  let last = performance.now();
-  let saveClock = 0;
 
-  function atGarage() {
-    const p = sim.state.player;
-    return Math.hypot(p.x - GARAGE_SPOT.x, p.z - GARAGE_SPOT.z) < 16;
-  }
+  // Load progress, if any visit left some.
+  const loaded = save.load();
+  if (loaded) save.apply(loaded);
 
-  function begin() {
+  function startGame() {
     sim.reset();
-    applySave(sim, missions, loadGame());
-    acc = 0;
+    missions.acknowledge();
+    if (auto) missions.startChapter(0);
+    accumulator = 0;
     screen = 'play';
-    hud.showScreen('play');
-    hud.banner('Port Solano — steal a car, make a name. M for jobs.');
-    audio.unlock();
+    hud.showPanel(null);
+    announce('Solano Heat. Steal a car and drive.');
+    audio.start();
   }
 
-  function finish(reason) {
-    screen = 'over';
-    hud.showScreen('over');
-    hud.setOverText(reason);
-    saveGame(sim, missions);
+  function showTitle() {
+    screen = 'title';
+    hud.showPanel(
+      '<h1>SOLANO HEAT</h1>' +
+        '<p>Sun-soaked 3D open-world crime — chase-cam driving, helicopter pursuits, roadblocks, radio and garage upgrades.</p>' +
+        '<p>Lucia Vane came back to Port Solano broke. Eight chapters take her from her first stolen car to the Night Job.</p>' +
+        '<p class="keys">W A S D drive · E steal car · Space punch · F shoot · Q weapon · R radio · G garage · M jobs · P pause</p>' +
+        '<p>Press Space or click to start.</p>',
+    );
   }
 
-  function buyFromMenu(n) {
-    const picks = ['armor', 'engine', 'nos', 'nos-refill', 'pistol', 'smg', 'shotgun'];
-    const pick = picks[n - 1];
-    if (!pick) return;
-    if (pick === 'nos-refill') {
-      if (sim.state.upgrades.nos && sim.state.cash >= 100) {
-        sim.state.cash -= 100;
-        sim.state.upgrades.nosAmount = 100;
-        hud.banner('NOS refilled.');
-      }
-      return;
+  function showMissionsPanel() {
+    missionsOpen = true;
+    let rows = '<h1>Jobs</h1>';
+    missions.chapters.forEach((ch, i) => {
+      const done = missions.completed.includes(i) ? '✓ ' : '';
+      rows += `<p data-chapter="${i}">${done}${i + 1}. ${ch.name} — $${ch.reward}<br><span>${ch.brief}</span></p>`;
+    });
+    rows += '<h2>Side jobs</h2>';
+    missions.sideJobs.forEach((job) => {
+      rows += `<p data-side="${job.kind}">${job.name} — $${job.reward}<br><span>${job.text}</span></p>`;
+    });
+    rows += '<p>Click a job, or press 1–8 for a chapter. Esc closes.</p>';
+    hud.showPanel(rows);
+    const panel = document.getElementById('hud-panel');
+    panel.querySelectorAll('[data-chapter]').forEach((row) => {
+      row.addEventListener('click', () => {
+        missions.startChapter(Number(row.dataset.chapter));
+        closePanels();
+      });
+    });
+    panel.querySelectorAll('[data-side]').forEach((row) => {
+      row.addEventListener('click', () => {
+        missions.startSideJob(row.dataset.side);
+        closePanels();
+      });
+    });
+  }
+
+  function showGaragePanel() {
+    garageOpen = true;
+    const s = sim.state;
+    const rows =
+      '<h1>Eastside Garage</h1>' +
+      `<p>Cash $${Math.floor(s.cash)}</p>` +
+      `<p data-buy="armor">1. Armor +${GARAGE.armorBonus} max health — $${GARAGE.armorPrice}${s.garage.armor ? ' (owned)' : ''}</p>` +
+      `<p data-buy="engine">2. Engine tune +${CAR.engineBonus} m/s top speed — $${GARAGE.enginePrice}${s.garage.engine ? ' (owned)' : ''}</p>` +
+      `<p data-buy="nos">3. NOS kit (3 charges) — $${GARAGE.nosPrice}${s.garage.nos ? ' (owned)' : ''}</p>` +
+      `<p data-buy="nosRefill">4. NOS refill — $${GARAGE.nosRefillPrice}</p>` +
+      `<p data-buy="weapon:1">5. Pistol — $${WEAPONS[1].price}${s.player.owned[1] ? ' (owned)' : ''}</p>` +
+      `<p data-buy="weapon:2">6. SMG — $${WEAPONS[2].price}${s.player.owned[2] ? ' (owned)' : ''}</p>` +
+      `<p data-buy="weapon:3">7. Shotgun — $${WEAPONS[3].price}${s.player.owned[3] ? ' (owned)' : ''}</p>` +
+      `<p data-buy="ammo">8. Ammo for the current weapon — $${WEAPONS[s.player.weapon].ammoPrice ?? '—'}</p>` +
+      '<p>Click a row or press its number. Esc closes.</p>';
+    hud.showPanel(rows);
+    const panel = document.getElementById('hud-panel');
+    panel.querySelectorAll('[data-buy]').forEach((row) => {
+      row.addEventListener('click', () => buyRow(row.dataset.buy));
+    });
+  }
+
+  function buyRow(what) {
+    const map = { 1: 'armor', 2: 'engine', 3: 'nos', 4: 'nosRefill', 5: 'weapon:1', 6: 'weapon:2', 7: 'weapon:3', 8: 'ammo' };
+    const key = map[what] ?? what;
+    let ok = false;
+    if (key.startsWith('weapon:')) ok = sim.buy('weapon', Number(key.slice(7)));
+    else if (key === 'ammo') ok = sim.buy('ammo', sim.state.player.weapon);
+    else ok = sim.buy(key);
+    if (ok) {
+      audio.cash();
+      save.save();
+      showGaragePanel();
+    } else {
+      announce('Cannot buy that right now.');
     }
-    sim.buyUpgrade(pick) || sim.buyWeapon(pick);
   }
 
-  function takeJob(n) {
-    const jobs = ['taxi', 'courier-job', 'vigilante', 'repo'];
-    const job = jobs[n - 1];
-    if (job && missions.startSideJob(job)) {
-      missionsOpen = false;
-      hud.hideMenus();
-      hud.banner(`${missions.currentDef().title} — good luck.`);
-    }
+  function closePanels() {
+    garageOpen = false;
+    missionsOpen = false;
+    hud.showPanel(null);
+    screen = 'play';
+  }
+
+  function nearGarage() {
+    const g = sim.city.places.garage;
+    return Math.hypot(sim.state.player.x - g.x, sim.state.player.z - g.z) < 14;
   }
 
   function handleActions() {
     const actions = input.takeActions();
-    setInCar(!!sim.state.car);
-    if (actions & ACTION_CONFIRM) {
-      if (screen === 'title' || screen === 'over') begin();
-      else if (screen === 'pause') { screen = 'play'; hud.showScreen('play'); }
+    if (actions & ACTION_SOUND) {
+      const on = audio.toggleSound();
+      announce(on ? 'Sound on.' : 'Sound off.');
     }
-    if (actions & ACTION_PAUSE) {
-      if (screen === 'play') { screen = 'pause'; hud.showScreen('pause'); }
-      else if (screen === 'pause') { screen = 'play'; hud.showScreen('play'); }
+    if (actions & ACTION_RADIO) {
+      const next = (sim.state.radio + 1) % 3;
+      sim.state.radio = next;
+      audio.setStation(next);
+      announce(`Radio: ${RADIO[next].name}.`);
     }
-    if (screen !== 'play') return;
-    if (actions & ACTION_MUTE) {
-      audio.setMuted(!audio.isMuted());
-      hud.banner(audio.isMuted() ? 'Sound off' : 'Sound on');
+    if (screen === 'title' || screen === 'over') {
+      if (actions & ACTION_CONFIRM) startGame();
+      return;
     }
-    if (actions & ACTION_RADIO) hud.banner(`Radio: ${audio.nextStation()}`);
-    if (actions & ACTION_GARAGE) {
-      if (garageOpen) { garageOpen = false; hud.hideMenus(); }
-      else if (atGarage()) { garageOpen = true; missionsOpen = false; hud.showGarage(sim.state); }
-      else hud.banner('Garage is at Eastside — follow the gold beam.');
+    if (garageOpen || missionsOpen) {
+      if (actions & (ACTION_PAUSE | ACTION_CONFIRM)) closePanels();
+      return;
     }
     if (actions & ACTION_MISSIONS) {
-      if (missionsOpen) { missionsOpen = false; hud.hideMenus(); }
-      else { missionsOpen = true; garageOpen = false; hud.showMissions(missions); }
+      showMissionsPanel();
+      return;
     }
-    if (actions & ACTION_NUMBER) {
-      const n = input.takeNumber();
-      if (garageOpen) buyFromMenu(n);
-      else if (missionsOpen) takeJob(n);
+    if (actions & ACTION_GARAGE) {
+      if (nearGarage()) showGaragePanel();
+      else announce('The garage is in Eastside — follow the map.');
+      return;
     }
-    // One-shot sim actions, consumed below in stepGame.
-    queued.enter = !!(actions & (ACTION_ENTER | ACTION_EXIT));
-    queued.shoot = !!(actions & ACTION_SHOOT);
-    queued.weaponSwitch = !!(actions & ACTION_WEAPON);
+    if (actions & ACTION_PAUSE) {
+      screen = 'paused';
+      hud.showPanel('<h1>Paused</h1><p>Press P to keep playing.</p>');
+      announce('Paused.');
+    }
   }
 
-  function stepGame() {
-    const drive = autoDemo ? pilot.input() : input.drive();
-    const stepInput = {
-      ...idleInput,
-      steer: drive.steer, throttle: drive.throttle,
-      run: drive.run, nos: drive.nos,
-      enter: queued.enter, shoot: queued.shoot, weaponSwitch: queued.weaponSwitch,
-    };
-    queued.enter = false;
-    queued.shoot = false;
-    queued.weaponSwitch = false;
-    const events = sim.step(STEP, stepInput);
-    const doneBefore = missions.state.completed.length;
+  function step() {
+    if (screen !== 'play') return;
+    const simInput = auto ? pilot.input() : input.read();
+    const events = sim.step(STEP, simInput);
     missions.update(STEP);
-    if (missions.state.completed.length > doneBefore) audio.chime();
     if (events & EVENT_SHOT) audio.shot();
-    else if (events & EVENT_BOOM) audio.crash();
-    if (sim.state.busted) finish('Busted by the Solano PD. The crew posts your bail — press Space to go again.');
-    else if (sim.state.dead) finish('Lucia is down. The city keeps moving — press Space to go again.');
-    if (autoDemo && !missions.state.active && missions.state.chapterIndex < missions.chapters.length) {
-      missions.nextChapter();
+    if (events & EVENT_BUSTED) {
+      const lost = Math.floor(sim.state.cash * 0.1);
+      sim.state.cash -= lost;
+      sim.state.wanted = 0;
+      sim.state.player.health = sim.state.player.maxHealth;
+      sim.state.player.x = SPAWN.x;
+      sim.state.player.z = SPAWN.z;
+      sim.state.player.onFoot = true;
+      screen = 'over';
+      hud.showPanel(`<h1>Busted</h1><p>The cops took $${lost}. Back on the street.</p><p>Press Space to play again.</p>`);
+      announce('Busted.');
+      save.save();
+      return;
     }
-    audio.update(sim.state.player.speed, sim.wantedStars());
-    saveClock += STEP;
-    if (saveClock > 10) {
-      saveClock = 0;
-      saveGame(sim, missions);
+    if (events & EVENT_WASTED) {
+      const lost = Math.floor(sim.state.cash * 0.25);
+      sim.state.cash -= lost;
+      sim.state.player.health = sim.state.player.maxHealth;
+      sim.state.player.x = SPAWN.x;
+      sim.state.player.z = SPAWN.z;
+      sim.state.player.onFoot = true;
+      sim.state.wanted = 0;
+      screen = 'over';
+      hud.showPanel(`<h1>Wasted</h1><p>You woke up at the Marina, $${lost} lighter.</p><p>Press Space to play again.</p>`);
+      announce('Wasted.');
+      save.save();
+      return;
     }
+    if (missions.done) {
+      audio.cash();
+      save.save();
+      missions.acknowledge();
+    }
+    if (missions.failed) {
+      announce(missions.message);
+      missions.acknowledge();
+    }
+    audio.setEngine(sim.state.player.speed, !sim.state.player.onFoot);
+    audio.setSiren(sim.state.wanted > 0, STEP);
   }
 
   function frame(now) {
     requestAnimationFrame(frame);
-    acc += Math.min((now - last) / 1000, MAX_FRAME);
+    accumulator += Math.min((now - last) / 1000, MAX_FRAME);
     last = now;
-    handleActions();
-    if (screen === 'play') {
-      while (acc >= STEP) {
-        stepGame();
-        acc -= STEP;
-        if (screen !== 'play') { acc = 0; break; }
+    if (screen === 'paused') {
+      if (input.takeActions() & (ACTION_PAUSE | ACTION_CONFIRM)) {
+        screen = 'play';
+        hud.showPanel(null);
+        announce('Playing.');
       }
-    } else {
-      acc = 0;
+      renderer.draw(0, missions.waypoint());
+      return;
     }
-    world3d.draw(sim.state, sim.state.time);
-    hud.update(sim.state, sim.wantedStars(), missions.statusText(), { radio: audio.stationName() });
+    handleActions();
+    if (screen === 'title') {
+      renderer.draw(0, missions.waypoint());
+      return;
+    }
+    while (accumulator >= STEP && screen === 'play') {
+      step();
+      accumulator -= STEP;
+      if (screen !== 'play') break;
+    }
+    if (screen === 'play' || screen === 'over') {
+      renderer.draw(STEP, missions.waypoint());
+      hud.update(STEP);
+    }
   }
 
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden && screen === 'play') {
-      screen = 'pause';
-      hud.showScreen('pause');
+  // Garage and chapter number keys, while a panel is open.
+  window.addEventListener('keydown', (event) => {
+    if (!garageOpen && !missionsOpen) return;
+    const n = Number.parseInt(event.key, 10);
+    if (!Number.isInteger(n) || n < 1 || n > 8) return;
+    if (garageOpen) buyRow(String(n));
+    else if (missionsOpen && n <= 8) {
+      missions.startChapter(n - 1);
+      closePanels();
     }
   });
 
-  hud.showScreen('title');
-  hud.banner('SOLANO HEAT — press Space or click to start.');
+  // Leaving the tab pauses a running game rather than letting the city run on.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && screen === 'play') {
+      screen = 'paused';
+      hud.showPanel('<h1>Paused</h1><p>Press P to keep playing.</p>');
+      announce('Paused.');
+    }
+  });
+
+  showTitle();
+  announce('Solano Heat. Press Space or click to start.');
   requestAnimationFrame(frame);
 }
 
