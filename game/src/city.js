@@ -1,232 +1,206 @@
-// Port Solano: a road grid, six districts, the buildings that fill the blocks,
-// and the road graph the autopilot drives on. Everything is dealt once from
-// the seeded random source, so the same seed builds the same city.
+// Port Solano's map: a road grid, six districts, procedural buildings, parked cars,
+// and the road graph the autopilot routes on. Everything is seeded, so the same seed
+// always builds the same city.
+import { COLORS, DISTRICTS, PLACES, WORLD } from './config.js';
+import { randInt, randPick, randRange } from './random.js';
 
-import { DISTRICTS, GRID, WORLD } from './config.js';
+const ROADS_X = [-400, -240, -80, 80, 240, 400];
+const ROADS_Z = [-280, -140, 0, 140, 280];
+const BUILDING_COLORS = [COLORS.buildingA, COLORS.buildingB, COLORS.buildingC, COLORS.buildingD];
 
-/** Avenue x coordinates, west to east. */
-export const AVENUES = [];
-for (let x = GRID.spacing / 2; x < WORLD.width; x += GRID.spacing) AVENUES.push(x);
-
-/** Street z coordinates, north to south. */
-export const STREETS = [];
-for (let z = GRID.spacing / 2; z < WORLD.height; z += GRID.spacing) STREETS.push(z);
-
-/** Half a road's width, plus the kerb. */
-const ROAD_HALF = GRID.roadWidth / 2;
-
-/** A building: a box on the ground, x/z bounds with a height. */
-function makeBuilding(rng, x0, z0, x1, z1) {
-  return {
-    x0,
-    z0,
-    x1,
-    z1,
-    h: rng.range(9, 42),
-    lit: rng.chance(0.45),
-    shade: rng.range(0.82, 1.08),
-  };
+function nodeId(ix, iz) {
+  return `${ix},${iz}`;
 }
 
-/** Whether the 2D segment (ax,az)-(bx,bz) crosses the building's footprint. */
-function segmentHitsBox(ax, az, bx, bz, b) {
-  const dx = bx - ax;
-  const dz = bz - az;
-  let t0 = 0;
-  let t1 = 1;
-  for (const [p, q] of [[-dx, ax - b.x0], [dx, b.x1 - ax], [-dz, az - b.z0], [dz, b.z1 - az]]) {
-    if (p === 0) {
-      if (q < 0) return false;
-      continue;
-    }
-    const t = q / p;
-    if (p < 0) {
-      if (t > t1) return false;
-      if (t > t0) t0 = t;
-    } else {
-      if (t < t0) return false;
-      if (t < t1) t1 = t;
-    }
-  }
-  return true;
-}
-
-export function createCity(rng) {
+export function createCity(random) {
   const buildings = [];
-  // One or two buildings per block, inset from the roads.
-  for (let ai = 0; ai < AVENUES.length - 1; ai += 1) {
-    for (let si = 0; si < STREETS.length - 1; si += 1) {
-      const bx0 = AVENUES[ai] + ROAD_HALF + 2;
-      const bx1 = AVENUES[ai + 1] - ROAD_HALF - 2;
-      const bz0 = STREETS[si] + ROAD_HALF + 2;
-      const bz1 = STREETS[si + 1] - ROAD_HALF - 2;
-      const count = rng.int(1, 2);
-      if (count === 1) {
-        buildings.push(makeBuilding(rng, bx0, bz0, bx1, bz1));
-      } else {
-        const split = rng.chance(0.5);
-        if (split) {
-          const mid = (bx0 + bx1) / 2;
-          buildings.push(makeBuilding(rng, bx0, bz0, mid - 2, bz1));
-          buildings.push(makeBuilding(rng, mid + 2, bz0, bx1, bz1));
-        } else {
-          const mid = (bz0 + bz1) / 2;
-          buildings.push(makeBuilding(rng, bx0, bz0, bx1, mid - 2));
-          buildings.push(makeBuilding(rng, bx0, mid + 2, bx1, bz1));
-        }
+  const parked = [];
+  const carColors = ['#c23b3b', '#3b6bc2', '#3bc26b', '#c2a13b', '#8a3bc2', '#c2c2c2', '#2b2b2b'];
+
+  // One or two buildings per block, kept clear of the roads by a sidewalk margin.
+  for (let ix = 0; ix < ROADS_X.length - 1; ix += 1) {
+    for (let iz = 0; iz < ROADS_Z.length - 1; iz += 1) {
+      const x0 = ROADS_X[ix] + 12;
+      const x1 = ROADS_X[ix + 1] - 12;
+      const z0 = ROADS_Z[iz] + 12;
+      const z1 = ROADS_Z[iz + 1] - 12;
+      const count = randInt(random, 1, 3);
+      for (let b = 0; b < count; b += 1) {
+        const w = randRange(random, 24, Math.max(26, (x1 - x0) / count - 8));
+        const d = randRange(random, 24, Math.max(26, z1 - z0 - 16));
+        const x = x0 + ((x1 - x0 - w) * (count === 1 ? 0.5 : b / (count - 1 || 1))) + w / 2;
+        const z = z0 + d / 2 + randRange(random, 0, Math.max(0, z1 - z0 - d));
+        buildings.push({
+          x, z, w, d,
+          h: randRange(random, 8, 42),
+          color: randPick(random, BUILDING_COLORS),
+          neon: random() < 0.3,
+        });
       }
     }
   }
 
-  // Named places the missions and the garage use.
-  const places = {
-    garage: { name: 'Eastside Garage', x: 760, z: 280 },
-    docks: { name: 'The Docks', x: 120, z: 520 },
-    northHills: { name: 'North Hills', x: 200, z: 120 },
-    pier: { name: 'Sunset Pier', x: 120, z: 360 },
-    marina: { name: 'Marina', x: 440, z: 360 },
-    downtown: { name: 'Downtown', x: 680, z: 120 },
-    eastside: { name: 'Eastside', x: 840, z: 280 },
-    safehouse: { name: 'Safehouse', x: 360, z: 200 },
-  };
+  // One car is always parked by the safehouse, a short walk from the spawn — the
+  // first ride is minutes away, not a hike across the city.
+  parked.push({ x: -74.5, z: -60, angle: 0, color: '#c23b3b' });
 
-  // Parked cars wait along the roads, just off the driving line.
-  const parked = [];
-  for (let i = 0; i < 26; i += 1) {
-    const onAvenue = rng.chance(0.5);
-    if (onAvenue) {
-      const x = rng.pick(AVENUES) + rng.pick([-1, 1]) * (ROAD_HALF - 1.2);
-      const z = rng.range(60, WORLD.height - 60);
-      parked.push({ x, z, angle: rng.pick([0, Math.PI]) });
+  // Parked cars along the road edges: the ones worth stealing.
+  for (let n = 0; n < 24; n += 1) {
+    const vertical = random() < 0.5;
+    if (vertical) {
+      parked.push({
+        x: randPick(random, ROADS_X) + (random() < 0.5 ? -5.5 : 5.5),
+        z: randRange(random, -280, 280),
+        angle: random() < 0.5 ? 0 : Math.PI,
+        color: randPick(random, carColors),
+      });
     } else {
-      const z = rng.pick(STREETS) + rng.pick([-1, 1]) * (ROAD_HALF - 1.2);
-      const x = rng.range(60, WORLD.width - 60);
-      parked.push({ x, z, angle: rng.pick([Math.PI / 2, -Math.PI / 2]) });
+      parked.push({
+        x: randRange(random, -400, 400),
+        z: randPick(random, ROADS_Z) + (random() < 0.5 ? -5.5 : 5.5),
+        angle: random() < 0.5 ? Math.PI / 2 : -Math.PI / 2,
+        color: randPick(random, carColors),
+      });
     }
   }
 
-  /** The nearest intersection to a point. */
+  // The road graph: intersections are nodes, road stretches are edges.
+  const nodes = new Map();
+  for (let ix = 0; ix < ROADS_X.length; ix += 1) {
+    for (let iz = 0; iz < ROADS_Z.length; iz += 1) {
+      nodes.set(nodeId(ix, iz), { x: ROADS_X[ix], z: ROADS_Z[iz], ix, iz });
+    }
+  }
+  const neighbours = new Map();
+  for (const [id, node] of nodes) {
+    const list = [];
+    const at = (ix, iz) => nodes.get(nodeId(ix, iz));
+    if (at(node.ix - 1, node.iz)) list.push(at(node.ix - 1, node.iz));
+    if (at(node.ix + 1, node.iz)) list.push(at(node.ix + 1, node.iz));
+    if (at(node.ix, node.iz - 1)) list.push(at(node.ix, node.iz - 1));
+    if (at(node.ix, node.iz + 1)) list.push(at(node.ix, node.iz + 1));
+    neighbours.set(id, list);
+  }
+
   function nearestNode(x, z) {
     let best = null;
     let bestD = Infinity;
-    for (const ax of AVENUES) {
-      for (const sz of STREETS) {
-        const d = (ax - x) * (ax - x) + (sz - z) * (sz - z);
-        if (d < bestD) {
-          bestD = d;
-          best = { x: ax, z: sz };
-        }
+    for (const node of nodes.values()) {
+      const d = (node.x - x) ** 2 + (node.z - z) ** 2;
+      if (d < bestD) {
+        bestD = d;
+        best = node;
       }
     }
     return best;
   }
 
-  /** A breadth-first route along the grid from one point to another. */
+  /** Breadth-first route between two points, as road waypoints (no U-turns in the middle). */
   function route(fromX, fromZ, toX, toZ) {
-    const start = nearestNode(fromX, fromZ);
-    const goal = nearestNode(toX, toZ);
-    const key = (p) => `${p.x},${p.z}`;
-    const prev = new Map();
-    const seen = new Set([key(start)]);
-    const queue = [start];
-    // An index, not shift(): shift() re-indexes the whole array on every
-    // dequeue, which turns a 96-node BFS quadratic for no reason.
-    for (let qi = 0; qi < queue.length; qi += 1) {
-      const cur = queue[qi];
-      if (cur.x === goal.x && cur.z === goal.z) break;
-      const ai = AVENUES.indexOf(cur.x);
-      const si = STREETS.indexOf(cur.z);
-      const nexts = [];
-      if (ai > 0) nexts.push({ x: AVENUES[ai - 1], z: cur.z });
-      if (ai < AVENUES.length - 1) nexts.push({ x: AVENUES[ai + 1], z: cur.z });
-      if (si > 0) nexts.push({ x: cur.x, z: STREETS[si - 1] });
-      if (si < STREETS.length - 1) nexts.push({ x: cur.x, z: STREETS[si + 1] });
-      for (const n of nexts) {
-        if (seen.has(key(n))) continue;
-        seen.add(key(n));
-        prev.set(key(n), cur);
-        queue.push(n);
+    // A clear straight line beats the road graph: drive directly when no
+    // building stands in the way (checked with the car's own radius).
+    const len = Math.hypot(toX - fromX, toZ - fromZ);
+    const steps = Math.ceil(len / 2);
+    let clear = true;
+    for (let i = 1; i < steps; i += 1) {
+      const t = i / steps;
+      if (insideBuilding(fromX + (toX - fromX) * t, fromZ + (toZ - fromZ) * t, 2.5) !== null) {
+        clear = false;
+        break;
       }
     }
-    const path = [goal];
+    if (clear) return [{ x: toX, z: toZ }];
+    const start = nearestNode(fromX, fromZ);
+    const goal = nearestNode(toX, toZ);
+    // Even when the trip starts and ends at the same intersection, route through
+    // it first: a straight line from an off-road position to the target can cut
+    // through a building, and the road is always clear.
+    if (start === goal) return [{ x: start.x, z: start.z }, { x: toX, z: toZ }];
+    const prev = new Map([[nodeId(start.ix, start.iz), null]]);
+    const queue = [start];
+    while (queue.length > 0) {
+      const cur = queue.shift();
+      if (cur === goal) break;
+      for (const next of neighbours.get(nodeId(cur.ix, cur.iz))) {
+        const id = nodeId(next.ix, next.iz);
+        if (!prev.has(id)) {
+          prev.set(id, cur);
+          queue.push(next);
+        }
+      }
+    }
+    const path = [];
     let cur = goal;
-    while (!(cur.x === start.x && cur.z === start.z)) {
-      const p = prev.get(key(cur));
-      if (!p) break;
-      path.unshift(p);
-      cur = p;
+    while (cur !== null) {
+      path.unshift({ x: cur.x, z: cur.z });
+      cur = prev.get(nodeId(cur.ix, cur.iz)) ?? null;
     }
     path.push({ x: toX, z: toZ });
     return path;
   }
 
+  /** The closest point on any road centreline. */
+  function nearestRoadPoint(x, z) {
+    let bestX = ROADS_X[0];
+    let bestD = Infinity;
+    for (const rx of ROADS_X) {
+      const d = Math.abs(x - rx);
+      if (d < bestD) {
+        bestD = d;
+        bestX = rx;
+      }
+    }
+    let bestZ = ROADS_Z[0];
+    bestD = Infinity;
+    for (const rz of ROADS_Z) {
+      const d = Math.abs(z - rz);
+      if (d < bestD) {
+        bestD = d;
+        bestZ = rz;
+      }
+    }
+    return Math.abs(x - bestX) < Math.abs(z - bestZ) ? { x: bestX, z } : { x, z: bestZ };
+  }
+
+  function districtAt(x, z) {
+    for (const d of DISTRICTS) {
+      if (x >= d.x0 && x < d.x1 && z >= d.z0 && z < d.z1) return d.name;
+    }
+    return 'Port Solano';
+  }
+
+  function insideBuilding(x, z, pad) {
+    for (const b of buildings) {
+      if (x > b.x - b.w / 2 - pad && x < b.x + b.w / 2 + pad && z > b.z - b.d / 2 - pad && z < b.z + b.d / 2 + pad) return b;
+    }
+    return null;
+  }
+
+  /** True when a building stands between two points (police line of sight). */
+  function segmentBlocked(x1, z1, x2, z2) {
+    const dx = x2 - x1;
+    const dz = z2 - z1;
+    const len = Math.hypot(dx, dz);
+    if (len === 0) return false;
+    const steps = Math.ceil(len / 2);
+    for (let i = 1; i < steps; i += 1) {
+      const t = i / steps;
+      if (insideBuilding(x1 + dx * t, z1 + dz * t, 0.4) !== null) return true;
+    }
+    return false;
+  }
+
   return {
+    roadsX: ROADS_X,
+    roadsZ: ROADS_Z,
     buildings,
-    places,
     parked,
-    avenues: AVENUES,
-    streets: STREETS,
-
-    /** The district a point sits in. */
-    districtAt(x, z) {
-      for (const d of DISTRICTS) {
-        if (x >= d.x0 && x < d.x1 && z >= d.z0 && z < d.z1) return d.name;
-      }
-      return DISTRICTS[0].name;
-    },
-
-    /** Whether a point is inside a building's footprint (with padding). */
-    inBuilding(x, z, pad = 0) {
-      for (const b of buildings) {
-        if (x > b.x0 - pad && x < b.x1 + pad && z > b.z0 - pad && z < b.z1 + pad) return true;
-      }
-      return false;
-    },
-
-    /** Whether any building stands between two points (line of sight). */
-    blockedBetween(ax, az, bx, bz) {
-      for (const b of buildings) {
-        if (segmentHitsBox(ax, az, bx, bz, b)) return true;
-      }
-      return false;
-    },
-
-    /** The nearest point on a road centreline to (x, z). */
-    nearestRoadPoint(x, z) {
-      let bestX = AVENUES[0];
-      let bestD = Infinity;
-      for (const ax of AVENUES) {
-        const d = Math.abs(ax - x);
-        if (d < bestD) {
-          bestD = d;
-          bestX = ax;
-        }
-      }
-      let bestZ = STREETS[0];
-      bestD = Infinity;
-      for (const sz of STREETS) {
-        const d = Math.abs(sz - z);
-        if (d < bestD) {
-          bestD = d;
-          bestZ = sz;
-        }
-      }
-      const dx = Math.abs(bestX - x);
-      const dz = Math.abs(bestZ - z);
-      return dx <= dz ? { x: bestX, z } : { x, z: bestZ };
-    },
-
-    /** A point ahead of (x, z) along `angle`, snapped onto a road. */
-    pointAhead(x, z, angle, distance) {
-      const px = x + Math.sin(angle) * distance;
-      const pz = z + Math.cos(angle) * distance;
-      return this.nearestRoadPoint(
-        Math.max(20, Math.min(WORLD.width - 20, px)),
-        Math.max(20, Math.min(WORLD.height - 20, pz)),
-      );
-    },
-
-    nearestNode,
+    places: PLACES,
     route,
+    nearestRoadPoint,
+    nearestNode,
+    districtAt,
+    insideBuilding,
+    segmentBlocked,
   };
 }

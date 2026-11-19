@@ -1,16 +1,10 @@
-// Solano Heat — the story. Eight chapters take Lucia Vane from her first
-// stolen car to the Night Job, plus four repeatable side jobs. A chapter is
-// a list of steps; each step is a place to reach, a thing to wait out, or a
-// heat level to lose. The missions read the sim's state and never touch the
-// DOM, so the autopilot and the tests drive them the same way a player does.
+// The story. Eight chapters take Lucia Vane from her first stolen car to the Night
+// Job, plus four repeatable side jobs. A chapter is a list of steps; each step is a
+// place to reach, a thing to wait out, or a heat level to lose. The missions read the
+// sim's state and never touch the DOM, so the autopilot and the tests drive them the
+// same way a player does.
+const WAYPOINT_RADIUS = 6;
 
-import { WAYPOINT_RADIUS } from './config.js';
-
-function dist(ax, az, bx, bz) {
-  return Math.hypot(ax - bx, az - bz);
-}
-
-/** The eight chapters, in story order. */
 export const CHAPTERS = [
   {
     name: 'First Ride',
@@ -45,7 +39,9 @@ export const CHAPTERS = [
     brief: 'The job went loud and the heat is on. Lose the cops — all of them — and go quiet.',
     reward: 500,
     onStart(sim) {
-      sim.state.wanted = 2;
+      // A two-star chase: losable. Adding to whatever heat the player carries
+      // would make the getaway unwinnable at five stars.
+      sim.setWanted(2);
     },
     steps: [{ type: 'loseWanted', text: 'Lose the wanted level' }],
   },
@@ -55,8 +51,8 @@ export const CHAPTERS = [
     reward: 550,
     steps: [
       { type: 'goto', place: 'docks', text: 'Take the first corner' },
-      { type: 'goto', x: 320, z: 520, text: 'Take the second corner' },
-      { type: 'goto', x: 520, z: 440, text: 'Take the third corner' },
+      { type: 'goto', x: 400, z: 140, text: 'Take the second corner' },
+      { type: 'goto', x: 240, z: 280, text: 'Take the third corner' },
     ],
   },
   {
@@ -79,23 +75,28 @@ export const CHAPTERS = [
     name: 'The Night Job',
     brief: 'One package, a helicopter overhead, roadblocks on every fast road, and a clock that does not stop.',
     reward: 1200,
+    timeLimit: 180,
     onStart(sim) {
-      sim.state.wanted = 4;
+      // Four stars and the helicopter overhead — the finale's fixed heat.
+      sim.setWanted(4);
     },
     steps: [
       { type: 'goto', place: 'pier', text: 'Grab the package at Sunset Pier' },
-      { type: 'goto', place: 'northHills', text: 'Deliver to North Hills', timed: 150 },
+      { type: 'goto', place: 'northHills', text: 'Deliver to North Hills', timed: 180 },
     ],
   },
 ];
 
-/** The four side jobs, repeatable for cash. */
 export const SIDE_JOBS = [
   { kind: 'taxi', name: 'Taxi Fare', text: 'Pick up the fare and drop them off', reward: 100 },
   { kind: 'courier', name: 'Courier Drop', text: 'Deliver the parcel, timed', reward: 120 },
   { kind: 'vigilante', name: 'Vigilante', text: 'Ram the target car 3 times', reward: 200 },
   { kind: 'repo', name: 'Repo Run', text: 'Steal the marked car, bring it to the garage', reward: 250 },
 ];
+
+function dist(ax, az, bx, bz) {
+  return Math.hypot(ax - bx, az - bz);
+}
 
 export function createMissions(sim) {
   const places = sim.city.places;
@@ -109,13 +110,16 @@ export function createMissions(sim) {
   let message = '';
   const completed = [];
   let sideJob = null;
+  let ramCount = 0;
+  let ramCooldown = 0;
+  let repoMark = null;
+  let flee = null;
 
-  /** The coordinates a step points at, or null when it has none. */
   function stepTarget(step) {
-    if (!step) return null;
-    if (step.place) {
+    if (step === null || step === undefined) return null;
+    if (step.place !== undefined) {
       const p = places[step.place];
-      return p ? { x: p.x, z: p.z } : null;
+      return p === undefined ? null : { x: p.x, z: p.z };
     }
     if (typeof step.x === 'number') return { x: step.x, z: step.z };
     return null;
@@ -127,7 +131,19 @@ export function createMissions(sim) {
 
   function step() {
     const ch = chapter();
-    return ch ? ch.steps[stepIndex] : null;
+    return ch === null ? null : ch.steps[stepIndex] ?? null;
+  }
+
+  // Restore the list of finished chapters after a load (save.js keeps it next
+  // to the sim snapshot; invalid or out-of-range entries are dropped).
+  function restore(list) {
+    if (!Array.isArray(list)) return;
+    completed.length = 0;
+    for (const n of list) {
+      if (typeof n === 'number' && n >= 0 && n < CHAPTERS.length && !completed.includes(n)) {
+        completed.push(n);
+      }
+    }
   }
 
   function startChapter(index) {
@@ -139,155 +155,232 @@ export function createMissions(sim) {
     waitTimer = 0;
     failed = false;
     done = false;
-    message = CHAPTERS[index].brief;
+    sideJob = null;
     const ch = CHAPTERS[index];
-    if (ch.onStart) ch.onStart(sim);
-    const first = ch.steps[0];
-    if (first && first.timed) stepTimer = first.timed;
+    if (typeof ch.onStart === 'function') ch.onStart(sim);
+    message = `${ch.name}: ${ch.steps[0].text}`;
     return true;
+  }
+
+  function nextChapter() {
+    const next = completed.length;
+    if (next >= CHAPTERS.length) return false;
+    return startChapter(next);
+  }
+
+  function failChapter(reason) {
+    failed = true;
+    message = reason;
   }
 
   function completeChapter() {
     const ch = chapter();
-    if (!ch) return;
+    if (ch === null) return;
     sim.state.cash += ch.reward;
     completed.push(current);
     message = `${ch.name} complete. +$${ch.reward}.`;
+    current = -1;
     done = true;
-    current = -1;
-    stepIndex = 0;
-  }
-
-  function failChapter(reason) {
-    message = reason;
-    failed = true;
-    current = -1;
-    stepIndex = 0;
   }
 
   function advanceStep() {
     stepIndex += 1;
     stepTimer = 0;
     waitTimer = 0;
-    const next = step();
-    if (next && next.timed) stepTimer = next.timed;
-    if (!next) completeChapter();
+    const s = step();
+    const ch = chapter();
+    if (s === null) {
+      completeChapter();
+    } else {
+      message = `${ch.name}: ${s.text}`;
+    }
   }
 
-  /** Start a side job. Its target is picked from the city by kind. */
   function startSideJob(kind) {
     const def = SIDE_JOBS.find((j) => j.kind === kind);
-    if (!def || sideJob) return false;
-    if (kind === 'taxi') {
-      const a = places.pier;
-      const b = places.downtown;
-      sideJob = { ...def, phase: 'pickup', ax: a.x, az: a.z, bx: b.x, bz: b.z, timer: 0 };
-    } else if (kind === 'courier') {
-      sideJob = { ...def, phase: 'deliver', ax: places.marina.x, az: places.marina.z, bx: places.eastside.x, bz: places.eastside.z, timer: 120 };
+    if (def === undefined || sideJob !== null) return false;
+    if (kind === 'taxi' || kind === 'courier') {
+      const keys = ['downtown', 'northHills', 'eastside', 'pier', 'marina', 'docks'];
+      const target = keys[Math.floor(Math.random() * keys.length)];
+      sideJob = { kind, target, timer: kind === 'courier' ? 120 : -1, done: false };
     } else if (kind === 'vigilante') {
-      const target = sim.state.traffic[0];
-      sideJob = { ...def, phase: 'hunt', hits: 0, target, timer: 0 };
-    } else {
-      const car = sim.state.parkedCars.find((c) => c.parked);
-      sideJob = { ...def, phase: 'steal', car, bx: places.garage.x, bz: places.garage.z, timer: 0 };
+      const cars = sim.state.traffic.filter((c) => !c.wrecked);
+      if (cars.length === 0) return false;
+      sideJob = { kind, target: cars[0], rams: 0, done: false };
+      ramCount = 0;
+      ramCooldown = 0;
+    } else if (kind === 'repo') {
+      if (sim.city.parked.length === 0) return false;
+      const mark = sim.city.parked[0];
+      repoMark = { x: mark.x, z: mark.z, taken: false };
+      sideJob = { kind, done: false };
     }
-    message = def.text;
+    message = `${def.name}: ${def.text}`;
     return true;
   }
 
-  function finishSideJob() {
-    if (!sideJob) return;
-    sim.state.cash += sideJob.reward;
-    message = `${sideJob.name} done. +$${sideJob.reward}.`;
+  function completeSideJob() {
+    if (sideJob === null) return;
+    const def = SIDE_JOBS.find((j) => j.kind === sideJob.kind);
+    sim.state.cash += def.reward;
+    message = `${def.name} complete. +$${def.reward}.`;
     sideJob = null;
+    repoMark = null;
   }
 
   function updateSideJob(dt) {
-    if (!sideJob) return;
+    if (sideJob === null) return;
     const p = sim.state.player;
-    if (sideJob.timer > 0) {
-      sideJob.timer -= dt;
-      if (sideJob.timer <= 0) {
-        message = 'Too slow — the job is gone.';
+    if (sideJob.kind === 'taxi' || sideJob.kind === 'courier') {
+      if (sideJob.timer >= 0) {
+        sideJob.timer -= dt;
+        if (sideJob.timer <= 0) {
+          message = `${sideJob.kind === 'taxi' ? 'Taxi Fare' : 'Courier Drop'} failed: too slow.`;
+          sideJob = null;
+          return;
+        }
+      }
+      const place = places[sideJob.target];
+      if (place !== undefined && dist(p.x, p.z, place.x, place.z) < WAYPOINT_RADIUS) completeSideJob();
+    } else if (sideJob.kind === 'vigilante') {
+      if (ramCooldown > 0) ramCooldown -= dt;
+      const target = sideJob.target;
+      if (target === undefined || target.wrecked) {
         sideJob = null;
+        message = 'Vigilante failed: the target is gone.';
         return;
       }
-    }
-    if (sideJob.kind === 'taxi') {
-      const target = sideJob.phase === 'pickup' ? { x: sideJob.ax, z: sideJob.az } : { x: sideJob.bx, z: sideJob.bz };
-      if (dist(p.x, p.z, target.x, target.z) < WAYPOINT_RADIUS) {
-        if (sideJob.phase === 'pickup') sideJob.phase = 'dropoff';
-        else finishSideJob();
-      }
-    } else if (sideJob.kind === 'courier') {
-      if (dist(p.x, p.z, sideJob.bx, sideJob.bz) < WAYPOINT_RADIUS) finishSideJob();
-    } else if (sideJob.kind === 'vigilante') {
-      const t = sideJob.target;
-      if (t && !p.onFoot && dist(p.x, p.z, t.x, t.z) < 4 && Math.abs(p.speed) > 5) {
-        sideJob.hits += 1;
-        t.stopped = 2;
-        if (sideJob.hits >= 3) finishSideJob();
+      if (ramCooldown <= 0 && !p.onFoot && Math.abs(p.speed) > 5 && dist(p.x, p.z, target.x, target.z) < 5) {
+        ramCount += 1;
+        ramCooldown = 1;
+        sideJob.rams = ramCount;
+        if (ramCount >= 3) completeSideJob();
       }
     } else if (sideJob.kind === 'repo') {
-      const car = sideJob.car;
-      if (car && !car.parked && p.car === car.id && dist(p.x, p.z, sideJob.bx, sideJob.bz) < WAYPOINT_RADIUS) {
-        finishSideJob();
+      if (repoMark !== null && !repoMark.taken) {
+        if (!p.onFoot && dist(p.x, p.z, repoMark.x, repoMark.z) < 6) repoMark.taken = true;
+      }
+      if (repoMark !== null && repoMark.taken && sim.nearPlace('garage', WAYPOINT_RADIUS + 4)) completeSideJob();
+    }
+  }
+
+  function fleeTarget() {
+    // The map corner farthest from the player — picked ONCE and kept until the
+    // player reaches it. Re-picking every frame flips between two far corners
+    // and the player ping-pongs on one road forever, never losing the cops.
+    if (flee === null || Math.hypot(flee.x - sim.state.player.x, flee.z - sim.state.player.z) < 20) {
+      const corners = [[-400, -280], [400, -280], [-400, 280], [400, 280]];
+      let best = corners[0];
+      let bestD = -1;
+      for (const [x, z] of corners) {
+        const d = (x - sim.state.player.x) ** 2 + (z - sim.state.player.z) ** 2;
+        if (d > bestD) {
+          bestD = d;
+          best = [x, z];
+        }
+      }
+      flee = { x: best[0], z: best[1] };
+    }
+    return flee;
+  }
+
+  /** The point the autopilot should drive toward right now, or null. */
+  function target() {
+    if (sideJob !== null) {
+      if (sideJob.kind === 'taxi' || sideJob.kind === 'courier') {
+        const place = places[sideJob.target];
+        return place === undefined ? null : { x: place.x, z: place.z };
+      }
+      if (sideJob.kind === 'vigilante') {
+        return sideJob.target === undefined ? null : { x: sideJob.target.x, z: sideJob.target.z };
+      }
+      if (sideJob.kind === 'repo') {
+        if (repoMark !== null && !repoMark.taken) return { x: repoMark.x, z: repoMark.z };
+        return { x: places.garage.x, z: places.garage.z };
       }
     }
+    const s = step();
+    if (s === null) return null;
+    if (s.type === 'loseWanted') return fleeTarget();
+    if (s.type === 'goto' && s.stealth === true && sim.state.wanted > 0) {
+      // A stealth delivery with heat on: lose the heat first, then go in clean.
+      return fleeTarget();
+    }
+    if (s.type === 'steal') {
+      const parked = sim.city.parked[0];
+      return parked === undefined ? null : { x: parked.x, z: parked.z };
+    }
+    return stepTarget(s);
   }
 
   function update(dt) {
+    updateSideJob(dt);
     const ch = chapter();
-    if (ch) {
-      if (ch.timeLimit) {
-        chapterTimer += dt;
-        if (chapterTimer > ch.timeLimit) {
-          failChapter('Too slow — the run is blown.');
-          return;
-        }
-      }
-      const s = step();
-      if (!s) return;
-      if (s.timed) {
-        stepTimer -= dt;
-        if (stepTimer <= 0) {
-          failChapter('Out of time.');
-          return;
-        }
-      }
-      const p = sim.state.player;
-      if (s.type === 'steal') {
-        if (!p.onFoot) advanceStep();
-      } else if (s.type === 'goto') {
-        const t = stepTarget(s);
-        if (t && dist(p.x, p.z, t.x, t.z) < WAYPOINT_RADIUS) {
-          if (s.stealth && sim.state.wanted > 0) {
-            failChapter('Arrived hot — the deal is off.');
-            return;
-          }
-          advanceStep();
-        }
-      } else if (s.type === 'wait') {
-        const t = stepTarget(s);
-        if (t && dist(p.x, p.z, t.x, t.z) < WAYPOINT_RADIUS) {
-          waitTimer += dt;
-          if (waitTimer >= s.seconds) advanceStep();
-        } else {
-          waitTimer = 0;
-        }
-      } else if (s.type === 'loseWanted') {
-        if (sim.state.wanted === 0) advanceStep();
+    if (ch === null) return;
+    if (failed || done) return;
+    if (ch.timeLimit !== undefined) {
+      chapterTimer += dt;
+      if (chapterTimer > ch.timeLimit) {
+        failChapter(`${ch.name} failed: out of time.`);
+        return;
       }
     }
-    updateSideJob(dt);
+    const s = step();
+    if (s === null) return;
+    const p = sim.state.player;
+    if (s.type === 'steal') {
+      if (!p.onFoot) advanceStep();
+      return;
+    }
+    if (s.type === 'goto') {
+      if (s.timed !== undefined) {
+        stepTimer += dt;
+        if (stepTimer > s.timed) {
+          failChapter(`${ch.name} failed: out of time.`);
+          return;
+        }
+      }
+      const t = stepTarget(s);
+      if (t !== null && dist(p.x, p.z, t.x, t.z) < WAYPOINT_RADIUS) {
+        if (s.stealth === true && sim.state.wanted > 0) {
+          failChapter(`${ch.name} failed: arrived hot — the deal is off.`);
+          return;
+        }
+        advanceStep();
+      }
+      return;
+    }
+    if (s.type === 'wait') {
+      const t = stepTarget(s);
+      if (t !== null && dist(p.x, p.z, t.x, t.z) < WAYPOINT_RADIUS + 4) {
+        waitTimer += dt;
+        if (waitTimer >= (s.seconds ?? 5)) advanceStep();
+      } else {
+        waitTimer = 0;
+      }
+      return;
+    }
+    if (s.type === 'loseWanted') {
+      if (sim.state.wanted === 0) advanceStep();
+    }
+  }
+
+  function objective() {
+    if (sideJob !== null) {
+      const def = SIDE_JOBS.find((j) => j.kind === sideJob.kind);
+      return def === undefined ? '' : def.text;
+    }
+    const s = step();
+    if (s === null) return completed.length >= CHAPTERS.length ? 'All chapters complete.' : 'Pick a mission (M).';
+    return s.text;
   }
 
   return {
-    chapters: CHAPTERS,
-    sideJobs: SIDE_JOBS,
-    completed,
     get current() {
       return current;
+    },
+    get stepIndex() {
+      return stepIndex;
     },
     get failed() {
       return failed;
@@ -298,52 +391,18 @@ export function createMissions(sim) {
     get message() {
       return message;
     },
+    get completed() {
+      return completed;
+    },
     get sideJob() {
       return sideJob;
     },
-    chapter,
-    step,
-    stepTarget,
     startChapter,
+    restore,
+    nextChapter,
     startSideJob,
     update,
-    /** The current objective text, for the HUD. */
-    objective() {
-      const s = step();
-      if (s) return s.text;
-      if (sideJob) return sideJob.text;
-      if (current < 0 && completed.length < CHAPTERS.length) return 'Press M for the next job';
-      if (completed.length >= CHAPTERS.length) return 'All chapters done — free roam';
-      return '';
-    },
-    /** The waypoint the HUD and the autopilot aim at, or null. */
-    waypoint() {
-      const s = step();
-      if (s) return stepTarget(s);
-      if (sideJob) {
-        if (sideJob.kind === 'taxi') {
-          return sideJob.phase === 'pickup' ? { x: sideJob.ax, z: sideJob.az } : { x: sideJob.bx, z: sideJob.bz };
-        }
-        if (sideJob.kind === 'courier') return { x: sideJob.bx, z: sideJob.bz };
-        if (sideJob.kind === 'vigilante' && sideJob.target) return { x: sideJob.target.x, z: sideJob.target.z };
-        if (sideJob.kind === 'repo') return { x: sideJob.bx, z: sideJob.bz };
-      }
-      return null;
-    },
-    /** Seconds left on the active timer, or null. */
-    timeLeft() {
-      const ch = chapter();
-      if (ch && ch.timeLimit) return Math.max(0, ch.timeLimit - chapterTimer);
-      const s = step();
-      if (s && s.timed) return Math.max(0, stepTimer);
-      if (sideJob && sideJob.timer > 0) return Math.max(0, sideJob.timer);
-      return null;
-    },
-    /** Clear the fail/done flags after the player reads them. */
-    acknowledge() {
-      failed = false;
-      done = false;
-      message = '';
-    },
+    target,
+    objective,
   };
 }

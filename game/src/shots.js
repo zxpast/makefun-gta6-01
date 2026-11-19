@@ -1,92 +1,47 @@
-// Solano Heat — the four screenshot scenes. Each one plays the real rules
-// forward from a fresh sim with the autopilot driving, then stages the heat
-// the shot is about: a daytime chase, a night helicopter pursuit, a
-// roadblock at dusk, and the finale with everything on. The Node painter
-// stages the same scenes from the same seed, so the screenshots are the
-// game's own frames.
-
-import { STEP } from './config.js';
+// Staged scenes for the screenshots. Each shot builds a fresh sim from the fixed seed,
+// starts a chapter, adds the heat the scene needs, and lets the autopilot drive for a
+// few seconds — so the shot shows the same sim state and camera the game renders.
+import { createRandom } from './random.js';
+import { createSim } from './sim.js';
+import { createMissions } from './missions.js';
 import { createAutopilot } from './autopilot.js';
+import { chaseCamera } from './camera3d.js';
 
-function driveFor(sim, missions, seconds) {
-  const pilot = createAutopilot(sim, missions);
-  const steps = Math.floor(seconds / STEP);
+const SHOT_SEED = 7;
+
+function driveSeconds(sim, missions, pilot, seconds) {
+  const steps = Math.round(seconds * 60);
   for (let i = 0; i < steps; i += 1) {
-    sim.step(STEP, pilot.input());
-    missions.update(STEP);
+    sim.step(1 / 60, pilot.input());
+    missions.update(1 / 60);
   }
 }
 
-function setClock(sim, hours, minutes) {
-  sim.state.clockMinutes = hours * 60 + minutes;
+export function stageShot(name) {
+  const random = createRandom(SHOT_SEED);
+  const sim = createSim(random);
+  const missions = createMissions(sim);
+  const pilot = createAutopilot(sim, missions);
+  if (name === 'chase') {
+    missions.startChapter(0);
+    driveSeconds(sim, missions, pilot, 12);
+  } else if (name === 'heli') {
+    missions.startChapter(1);
+    sim.addHeat(4);
+    driveSeconds(sim, missions, pilot, 10);
+  } else if (name === 'roadblock') {
+    missions.startChapter(1);
+    sim.addHeat(4);
+    driveSeconds(sim, missions, pilot, 12);
+  } else if (name === 'finale') {
+    sim.setClock(22, 0);
+    missions.startChapter(7);
+    driveSeconds(sim, missions, pilot, 10);
+  } else {
+    throw new Error(`unknown shot: ${name}`);
+  }
+  const camera = chaseCamera(sim.state.player, null, 0);
+  return { sim, missions, camera };
 }
 
-/** Put the cruisers where the chase camera can see them: alongside and ahead. */
-function placePoliceForShot(sim) {
-  const p = sim.state.player;
-  const fx = Math.sin(p.angle);
-  const fz = Math.cos(p.angle);
-  const rx = Math.cos(p.angle);
-  const rz = -Math.sin(p.angle);
-  const spots = [
-    { f: 10, s: -8 },
-    { f: 2, s: 8 },
-    { f: 28, s: 0 },
-    { f: 16, s: -14 },
-  ];
-  sim.state.police.forEach((cop, i) => {
-    const spot = spots[i % spots.length];
-    cop.x = p.x + fx * spot.f + rx * spot.s;
-    cop.z = p.z + fz * spot.f + rz * spot.s;
-    cop.angle = p.angle;
-    cop.speed = 22;
-    cop.mode = 'chase';
-  });
-}
-
-/** Put the helicopter ahead and off to the side, inside the camera frame. */
-function placeHeliForShot(sim) {
-  const p = sim.state.player;
-  sim.state.heli.x = p.x + Math.sin(p.angle) * 25 + Math.cos(p.angle) * 12;
-  sim.state.heli.z = p.z + Math.cos(p.angle) * 25 - Math.sin(p.angle) * 12;
-  sim.state.heli.active = true;
-}
-
-/** Stage `name` (chase|heli|roadblock|finale) and return the screen to draw. */
-export function stageShot(name, sim, missions) {
-  sim.reset();
-  if (name === 'heli' || name === 'finale') setClock(sim, 22, 10);
-  else if (name === 'roadblock') setClock(sim, 18, 40);
-  else setClock(sim, 15, 20);
-
-  // Every scene is the same shape: start a chapter, drive to build the
-  // chase, set the heat (and the helicopter or roadblock the shot is
-  // about), drive a little more so the police and roadblocks spawn, then
-  // place the cruisers where the chase camera can see them.
-  function stage(chapter, driveSeconds, wanted, afterDrive, settleSeconds) {
-    missions.startChapter(chapter);
-    driveFor(sim, missions, driveSeconds);
-    sim.state.wanted = wanted;
-    afterDrive();
-    driveFor(sim, missions, settleSeconds);
-    placePoliceForShot(sim);
-    return { screen: 'play' };
-  }
-
-  if (name === 'finale') {
-    return stage(7, 26, 5, () => {
-      sim.state.roadblockTimer = 0;
-      placeHeliForShot(sim);
-    }, 4);
-  }
-  if (name === 'heli') {
-    return stage(0, 22, 4, () => placeHeliForShot(sim), 3);
-  }
-  if (name === 'roadblock') {
-    return stage(0, 20, 4, () => {
-      sim.state.roadblockTimer = 0;
-    }, 3);
-  }
-  // chase: broad daylight, three stars, cruisers on the tail.
-  return stage(0, 24, 3, () => {}, 3);
-}
+export const SHOT_NAMES = ['chase', 'heli', 'roadblock', 'finale'];

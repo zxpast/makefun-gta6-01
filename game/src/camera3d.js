@@ -1,126 +1,82 @@
-// Solano Heat — the chase camera. One piece of math serves both renders:
-// the browser's Three.js camera and the Node screenshot painter take the
-// same eye and target, so a screenshot frames exactly what the player sees.
+// The chase camera, as pure math: the Three.js renderer and the Node screenshot painter
+// both use this, so a screenshot shows exactly the frame the game renders.
+import { CAMERA } from './config.js';
 
-/** Vertical field of view, in radians. */
-export const CAMERA_FOV = (62 * Math.PI) / 180;
-
-/** How fast the camera settles behind the player (per second). */
-const SMOOTH = 5;
-
-/** A 3D point. */
-function point(x, y, z) {
-  return { x, y, z };
+function clamp(v, lo, hi) {
+  return v < lo ? lo : v > hi ? hi : v;
 }
 
-function sub(a, b) {
-  return point(a.x - b.x, a.y - b.y, a.z - b.z);
-}
-
-function cross(a, b) {
-  return point(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
-}
-
-function dot(a, b) {
-  return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-function length(a) {
-  return Math.hypot(a.x, a.y, a.z);
-}
-
-function normalize(a) {
-  const l = length(a) || 1;
-  return point(a.x / l, a.y / l, a.z / l);
-}
-
-/**
- * The chase camera: it trails the player, smoothed, and looks a little
- * ahead of where they are going. `update` moves it; `eye` and `target`
- * are what both renderers point at.
- */
-export function createCamera() {
-  const eye = point(480, 6, 340);
-  const target = point(480, 1, 360);
-
+/** The camera eye and look target for a player at (x, z) facing `angle`, smoothed by dt. */
+export function chaseCamera(player, prev, dt) {
+  const backX = -Math.sin(player.angle);
+  const backZ = -Math.cos(player.angle);
+  const wantEye = {
+    x: player.x + backX * CAMERA.distance,
+    z: player.z + backZ * CAMERA.distance,
+    y: CAMERA.height,
+  };
+  const wantTarget = {
+    x: player.x + Math.sin(player.angle) * CAMERA.lookAhead,
+    z: player.z + Math.cos(player.angle) * CAMERA.lookAhead,
+    y: 1.2,
+  };
+  if (prev === null || dt <= 0) return { eye: wantEye, target: wantTarget };
+  const k = Math.min(1, CAMERA.smooth * dt);
   return {
-    eye,
-    target,
-    update(sim, dt) {
-      const p = sim.state.player;
-      const driving = !p.onFoot;
-      const back = driving ? 9.5 : 6.5;
-      const height = driving ? 4.6 : 3.1;
-      const ahead = driving ? 13 : 9;
-      const fx = Math.sin(p.angle);
-      const fz = Math.cos(p.angle);
-      const wantEye = point(p.x - fx * back, height, p.z - fz * back);
-      const wantTarget = point(p.x + fx * ahead, 1.2, p.z + fz * ahead);
-      const k = 1 - Math.exp(-SMOOTH * dt);
-      eye.x += (wantEye.x - eye.x) * k;
-      eye.y += (wantEye.y - eye.y) * k;
-      eye.z += (wantEye.z - eye.z) * k;
-      target.x += (wantTarget.x - target.x) * k;
-      target.y += (wantTarget.y - target.y) * k;
-      target.z += (wantTarget.z - target.z) * k;
+    eye: {
+      x: prev.eye.x + (wantEye.x - prev.eye.x) * k,
+      z: prev.eye.z + (wantEye.z - prev.eye.z) * k,
+      y: prev.eye.y + (wantEye.y - prev.eye.y) * k,
     },
-    /** Snap the camera to the player at once (scene starts). */
-    snap(sim) {
-      const p = sim.state.player;
-      const driving = !p.onFoot;
-      const back = driving ? 9.5 : 6.5;
-      const height = driving ? 4.6 : 3.1;
-      const ahead = driving ? 13 : 9;
-      const fx = Math.sin(p.angle);
-      const fz = Math.cos(p.angle);
-      eye.x = p.x - fx * back;
-      eye.y = height;
-      eye.z = p.z - fz * back;
-      target.x = p.x + fx * ahead;
-      target.y = 1.2;
-      target.z = p.z + fz * ahead;
+    target: {
+      x: prev.target.x + (wantTarget.x - prev.target.x) * k,
+      z: prev.target.z + (wantTarget.z - prev.target.z) * k,
+      y: prev.target.y + (wantTarget.y - prev.target.y) * k,
     },
   };
 }
 
-/** The camera's forward direction, from its eye to its target. */
-export function cameraForward(camera) {
-  const dx = camera.target.x - camera.eye.x;
-  const dy = camera.target.y - camera.eye.y;
-  const dz = camera.target.z - camera.eye.z;
-  const len = Math.hypot(dx, dy, dz) || 1;
-  return { x: dx / len, y: dy / len, z: dz / len };
+/** The camera's forward direction on the ground, for the painter's spotlight cone. */
+export function cameraForward(eye, target) {
+  const dx = target.x - eye.x;
+  const dz = target.z - eye.z;
+  const len = Math.hypot(dx, dz) || 1;
+  return { x: dx / len, z: dz / len };
 }
 
 /**
- * Project a world point to screen pixels. Returns null when the point is
- * behind the camera. `width`/`height` are the frame's pixels.
+ * Project a world point to screen space (1280x720) with a perspective camera.
+ * Returns {x, y, behind} — behind when the point sits behind the camera.
  */
-export function projectPoint(p, eye, target, width, height) {
-  const forward = normalize(sub(target, eye));
-  const right = normalize(cross(forward, point(0, 1, 0)));
-  const up = cross(right, forward);
-  const rel = sub(p, eye);
-  const z = dot(rel, forward);
-  if (z < 0.5) return null;
-  const f = height / 2 / Math.tan(CAMERA_FOV / 2);
-  const x = dot(rel, right);
-  const y = dot(rel, up);
-  return {
-    x: width / 2 + (x / z) * f,
-    y: height / 2 - (y / z) * f,
-    depth: z,
-    scale: f / z,
-  };
+export function project(point, eye, target, fovDeg) {
+  const fwd = { x: target.x - eye.x, y: target.y - eye.y, z: target.z - eye.z };
+  const fwdLen = Math.hypot(fwd.x, fwd.y, fwd.z) || 1;
+  fwd.x /= fwdLen;
+  fwd.y /= fwdLen;
+  fwd.z /= fwdLen;
+  const right = { x: -fwd.z, y: 0, z: fwd.x };
+  const rightLen = Math.hypot(right.x, right.z) || 1;
+  right.x /= rightLen;
+  right.z /= rightLen;
+  // up = right × forward (the camera's own up, from the two axes above).
+  const upX = right.y * fwd.z - right.z * fwd.y;
+  const upY = right.z * fwd.x - right.x * fwd.z;
+  const upZ = right.x * fwd.y - right.y * fwd.x;
+  const dx = point.x - eye.x;
+  const dy = (point.y ?? 0) - eye.y;
+  const dz = point.z - eye.z;
+  const cx = dx * right.x + dy * right.y + dz * right.z;
+  const cy = dx * upX + dy * upY + dz * upZ;
+  const cz = dx * fwd.x + dy * fwd.y + dz * fwd.z;
+  if (cz < 0.5) return { x: 0, y: 0, behind: true };
+  const f = (720 / 2) / Math.tan(((fovDeg * Math.PI) / 180 / 2));
+  const scale = f / cz;
+  return { x: 640 + cx * scale, y: 360 - cy * scale, behind: false };
 }
 
-/** Project a flat ground quad's corners; null when any corner is behind. */
-export function projectQuad(corners, eye, target, width, height) {
-  const out = [];
-  for (const c of corners) {
-    const s = projectPoint(c, eye, target, width, height);
-    if (!s) return null;
-    out.push(s);
-  }
-  return out;
+/** A point's distance from the camera eye, for painter's-algorithm sorting. */
+export function eyeDistance(point, eye) {
+  return Math.hypot(point.x - eye.x, (point.y ?? 0) - eye.y, point.z - eye.z);
 }
+
+export { clamp };

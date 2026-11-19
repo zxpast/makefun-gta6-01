@@ -1,79 +1,39 @@
-[![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
-[![rank](https://make.fun/badge/gta6-01/zxpast/makefun-gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
-[![reward](https://make.fun/badge/gta6-01/zxpast/makefun-gta6-01/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+# Solano Heat
 
-# Solano Heat — a 3D open-world crime game
+A Grand Theft Auto VI–inspired open-city chase game for the make.fun GTA6-01 bounty.
 
-Sun-soaked 3D open-world crime — chase-cam driving, helicopter pursuits, roadblocks, radio and garage upgrades. Built from scratch for make.fun's gta6-01 bounty in Three.js (vendored under `game/vendor/three/`). Everything is original: the sun-soaked city of **Port Solano**, its people, cars, crews and story are invented here — nothing from Rockstar or any other commercial game.
+Lucia Vane is broke in Solano City. Steal a car, run eight chapters of jobs — courier
+drops, gang pickups, getaways, turf takeovers, a midnight run, a silent pickup, and the
+finale **The Night Job** — while the wanted level climbs, the helicopter circles, and
+roadblocks go up on the roads ahead. Four side jobs (taxi, courier, vigilante, repo),
+a garage for armor, engine and NOS upgrades, three weapons, and a three-station radio
+round out the city.
 
-## The story
+## Play
 
-Lucia Vane came back to Port Solano broke, with a borrowed jacket and a debt she did not make. The city runs on favours: the Docks crew moves what the harbour will not admit, the North Hills families pay for silence, and the Sunset Pier dealers never sleep. Eight chapters take Lucia from her first stolen car to **The Night Job** — one package, a helicopter overhead, roadblocks on every fast road, and a clock that does not stop.
+- **W A S D / arrows** — drive or walk
+- **Shift** — sprint on foot
+- **Space** — NOS boost in the car
+- **E** — steal a car / enter, **X** — step out of the car
+- **F** — shoot from the car, **P** — punch on foot
+- **Q** — cycle weapon, **R** — next radio station
+- **M** — retry a failed mission
+- **L** — save, **K** — load (saves the sim and the finished chapters; a corrupt
+  save is ignored and the game starts fresh)
+- **1 / 2 / 3** — buy armor / engine / NOS at the garage
 
-## The city
+## Run it
 
-Port Solano is a 960 by 640 metre open world: six districts (North Hills, Downtown, Eastside, Sunset Pier, Marina, the Docks), a road grid full of traffic, sidewalks full of pedestrians, parked cars worth stealing, and police who answer to your wanted level. Day turns to dusk as you play; the neon comes on over the Pier and the Docks, and the helicopter's spotlight sweeps the streets at four stars and up.
+```sh
+node serve.ts        # http://localhost:8080/game/
+node test/sim-test.mjs
+node main.ts         # builds dossier.json
+```
 
-## What you can do
+## Tech
 
-- **Explore on foot and by car** — walk, run, steal any parked car (E), drive with real acceleration, braking and steering, NOS boost (Shift, once bought), and lose the cops or outrun them.
-- **Eight story missions** — a first car theft, a courier run, a gang pickup, a getaway, a turf takeover, the timed **Midnight Run** (Docks to North Hills in 90 seconds), the stealth **Silent Pickup** (bring the handoff home with zero wanted stars — arrive hot and the deal is off), and the finale **The Night Job** (150 seconds, helicopter overhead, roadblocks ahead).
-- **Side jobs** — taxi fares, courier drops, vigilante takedowns and repo runs (steal a car, deliver it to the Eastside Garage, $250).
-- **Wanted system** — 0 to 5 stars. Steal, hit or shoot and the heat rises; police cars chase, ram and bust you. At 4–5 stars a police helicopter joins with a spotlight and roadblocks go up on the roads ahead. Break line of sight for six seconds and the cops lose your trail; lay low and the stars fade.
-- **Combat** — fists on foot (Space), and three guns (F): pistol, SMG and shotgun, with drive-by shooting from the car. Buy ammo at the garage.
-- **Radio** — three WebAudio stations (R to change): SOL FM, NEON NIGHTS, PIER TALK. All music is synthesised live; there are no audio files.
-- **Garage** — at the Eastside Garage (G when you are there): armor (+60 max health, $800), engine tune (+6 m/s, $1,200), NOS kit ($600, refill $100), and weapon ammo.
-- **HUD and minimap** — cash, wanted stars, game clock, district name, mission objective, a countdown on timed jobs, speed, NOS, weapon, radio, and a live minimap with roads, markers, police and the helicopter.
-- **Save** — progress, cash, garage and completed missions persist in the browser. An autopilot (`?auto=1`) plays the game itself as a demo.
-
-## Controls
-
-| Key | Action |
-|---|---|
-| W A S D / arrows | Move on foot, drive the car |
-| Shift | Run on foot / NOS boost in a car |
-| E | Enter / exit the nearest car |
-| Space | Punch (on foot) |
-| F | Shoot (pistol / SMG / shotgun) |
-| Q | Switch weapon |
-| R | Change radio station |
-| G | Garage (at the Eastside Garage) |
-| M | Missions and side jobs |
-| 1–8 | Take a chapter / buy in the garage |
-| P / Esc | Pause |
-| N | Sound on / off |
-
-## Playing
-
-Serve `game/` with any static server — `node serve.ts` then open http://localhost:8080 — and play in desktop Chrome. No network request is made; every file the game loads sits under `game/`.
-
-Screenshots are renders of the game's own code: the browser stages each scene with `?shot=chase|heli|roadblock|finale` (seed 7), and `shots/render-shots.mjs` paints the same staged states with the same chase camera in Node. Nothing is edited, composited or borrowed.
-
-## Verification
-
-`node test/sim-test.mjs` — 74 checks, all passing: determinism, stealing and driving, weapons and garage, police/wanted/helicopter/roadblocks, all eight chapters, staged scenes, and save round-trips. The autopilot finishes the full story (all eight chapters, no bust or death) in about 814 seconds of game time and ends with $4,950. `node shots/render-shots.mjs` renders the four screenshots (1280×720, each under 256 KiB). `MAKEFUN_OUTPUT_DIR=out node main.ts` builds the dossier twice byte-identically; the dossier text is 106,472 characters against a 163,840 cap.
-
-## Structure
-
-- `game/index.html` — the page, import map for Three.js, HUD panels
-- `game/src/main.js` — boot, the fixed-step loop, screens, autopilot demo
-- `game/src/config.js` — every tuning number, colour and district
-- `game/src/city.js` — the road grid, districts, buildings, markers, road graph
-- `game/src/sim.js` — the rules: driving, collisions, police, helicopter, roadblocks, wanted, weapons, garage
-- `game/src/missions.js` — the eight chapters and the four side jobs
-- `game/src/camera3d.js` — chase camera and projection, shared by browser and screenshots
-- `game/src/world3d.js` — Three.js rendering: instanced city, cars, helicopter, marker
-- `game/src/hud.js` — DOM HUD and live minimap
-- `game/src/input.js` — keyboard and pointer
-- `game/src/audio.js` — synthesised sound: engine, sirens, gunshots, three radio stations
-- `game/src/autopilot.js` — the driver that plays missions by the same rules
-- `game/src/shots.js` — the four screenshot scenes
-- `game/src/random.js` — the seeded random number generator
-- `game/src/save.js` — localStorage saves
-- `shots/render-shots.mjs` — the Node screenshot painter (same scenes, same camera)
-- `test/sim-test.mjs` — Node tests: autopilot missions, 60-second drive, determinism
-- `main.ts` — the hand-in program (Node 22, standard library only)
-
-## License
-
-MIT — see `LICENSE`.
+Three.js r187 (vendored under `game/vendor/three/`) renders the city; the rules run in
+`game/src/sim.js`, a deterministic 60 Hz engine shared by the game, the autopilot, and
+the screenshot painter, so a screenshot shows exactly the frame the game renders.
+Screenshots are painted in Node from the same sim state and chase camera — never
+fabricated.

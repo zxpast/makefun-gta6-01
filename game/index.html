@@ -1,45 +1,40 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Solano Heat — 3D open-world crime</title>
-<style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1526; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
-  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-  /* Read aloud, never shown: the status line screen readers announce. */
-  #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  #hud { position: fixed; inset: 0; pointer-events: none; color: #eef1f5; }
-  #hud-top { position: absolute; top: 12px; left: 14px; right: 14px; display: flex; gap: 22px; align-items: center; font-size: 20px; font-weight: 600; text-shadow: 0 1px 3px #000; }
-  #hud-cash { color: #f2c94c; }
-  #hud-health { width: 150px; height: 18px; background: #0008; border: 1px solid #fff3; }
-  #hud-health-bar { height: 100%; background: #58d68d; color: #06210f; font-size: 12px; line-height: 18px; text-align: center; }
-  #hud-wanted { letter-spacing: 2px; }
-  #hud-clock { margin-left: auto; font-size: 16px; color: #cfd6e2; }
-  #hud-right { position: absolute; top: 48px; right: 14px; text-align: right; font-size: 16px; text-shadow: 0 1px 3px #000; }
-  #hud-objective { position: absolute; left: 14px; bottom: 64px; font-size: 17px; text-shadow: 0 1px 3px #000; max-width: 560px; }
-  #hud-timer { position: absolute; left: 14px; bottom: 36px; font-size: 26px; font-weight: 700; color: #ffd76a; text-shadow: 0 1px 3px #000; }
-  #hud-speed { position: absolute; right: 14px; bottom: 190px; font-size: 20px; font-weight: 600; text-shadow: 0 1px 3px #000; }
-  #hud-banner { position: absolute; top: 96px; left: 50%; transform: translateX(-50%); background: #161a22ee; padding: 10px 22px; font-size: 17px; border: 1px solid #fff2; display: none; }
-  #hud-map { position: absolute; right: 14px; bottom: 14px; border: 2px solid #ffffff33; background: #10141c; }
-  #hud-panel { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #0d1526cc; pointer-events: auto; text-align: center; padding: 20px; }
-  #hud-panel h1 { font-size: 44px; margin: 0 0 10px; letter-spacing: 3px; color: #ffd76a; }
-  #hud-panel h2 { font-size: 20px; margin: 18px 0 4px; color: #37e0d8; }
-  #hud-panel p { font-size: 16px; margin: 6px 0; max-width: 640px; }
-  #hud-panel p span { color: #9aa3b2; font-size: 14px; }
-  #hud-panel p[data-chapter], #hud-panel p[data-buy], #hud-panel p[data-side] { cursor: pointer; padding: 4px 12px; }
-  #hud-panel p[data-chapter]:hover, #hud-panel p[data-buy]:hover, #hud-panel p[data-side]:hover { background: #ffffff18; }
-  #hud-panel .keys { color: #9aa3b2; font-size: 14px; }
-</style>
-<script type="importmap">
-{ "imports": { "three": "./vendor/three/three.module.min.js" } }
-</script>
-</head>
-<body>
-<noscript><p style="color:#eef1f5;font-family:system-ui,sans-serif;padding:20px">Solano Heat needs JavaScript to run — the game, the city and the radio are all code.</p></noscript>
-<canvas id="game" aria-label="Solano Heat: drive, steal cars, run missions and lose the cops in Port Solano"></canvas>
-<div id="hud"></div>
-<p id="status" role="status" aria-live="polite"></p>
-<script type="module" src="./src/main.js"></script>
-</body>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Solano Heat — GTA6-01</title>
+    <style>
+      html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0b1020; }
+      #game, #hud { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+      #hud { pointer-events: none; z-index: 5; }
+      #title {
+        position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        color: #fbbf24; font: bold 42px monospace; text-shadow: 0 2px 12px rgba(0,0,0,0.8);
+        z-index: 8; pointer-events: none; text-align: center;
+      }
+      #controls {
+        position: fixed; left: 14px; bottom: 12px; z-index: 8; pointer-events: none;
+        color: rgba(255,255,255,0.75); font: 12px monospace; line-height: 1.6;
+        text-shadow: 0 1px 4px rgba(0,0,0,0.9);
+      }
+    </style>
+    <script type="importmap">
+      { "imports": { "three": "./vendor/three/three.module.min.js" } }
+    </script>
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+    <canvas id="hud"></canvas>
+    <div id="title">SOLANO HEAT</div>
+    <div id="controls">WASD drive · E enter / exit · X step out · Shift run · Space NOS<br />F shoot · P punch · Q weapon · R radio · 1/2/3 garage · M missions</div>
+    <script>
+      // The title card fades once the game starts.
+      setTimeout(() => {
+        const el = document.getElementById('title');
+        if (el) el.style.display = 'none';
+      }, 2500);
+    </script>
+    <script type="module" src="./src/main.js"></script>
+  </body>
 </html>
